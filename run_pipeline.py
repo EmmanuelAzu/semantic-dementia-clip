@@ -17,26 +17,20 @@ GLOBAL_CONFIG = {
     "BATCH_SIZE": 64
 }
 
-# The complete structural matrix defined in the research proposal
+# Revised structural matrix: Pruning strictly at the transmodal hub
 EXPERIMENTAL_MATRIX = [
     # Linguistic Atrophy Pathway (Aphasia)
-    {"encoder": "text", "depth": "global"},
-    {"encoder": "text", "depth": "early"},
-    {"encoder": "text", "depth": "middle"},
-    {"encoder": "text", "depth": "deep"},
+    {"encoder": "text"},
     
-    # Visual Atrophy Pathway (Agnosia)
-    {"encoder": "vision", "depth": "global"},
-    {"encoder": "vision", "depth": "early"},
-    {"encoder": "vision", "depth": "middle"},
-    {"encoder": "vision", "depth": "deep"}
+    # Visual Atrophy Pathway (Visual Agnosia)
+    {"encoder": "vision"}
 ]
 
 def run_automated_matrix():
     print("=" * 70)
-    print("   CLIP SEMANTIC DEMENTIA - UNIFIED FULL MATRIX SIMULATION")
+    print("   CLIP SEMANTIC DEMENTIA - UNIFIED HUB-LEVEL SIMULATION")
     print("=" * 70)
-    print(f"Dataset Scale: {GLOBAL_CONFIG['IMAGES_PER_CLASS']} images/class (~10,000 total images)\n")
+    print(f"Dataset Scale: {GLOBAL_CONFIG['IMAGES_PER_CLASS']} images/class (~1,000 total images)\n")
 
     # ONE-TIME SETUPS: Build and Index the healthy state baseline
     print("\n--- [INIT] PHASE 1: DATA CURATION & TAXONOMY BUILDING ---")
@@ -55,29 +49,26 @@ def run_automated_matrix():
     # LOOPING THROUGH THE MATRIX: Sequential Neuropathological Execution
     for idx, run in enumerate(EXPERIMENTAL_MATRIX, 1):
         encoder = run["encoder"]
-        depth = run["depth"]
         
         print("\n" + "#" * 60)
-        print(f" RUN {idx}/{len(EXPERIMENTAL_MATRIX)}: Target = {encoder.upper()} | Depth = {depth.upper()}")
+        print(f" RUN {idx}/{len(EXPERIMENTAL_MATRIX)}: Target Hub = {encoder.upper()}")
         print("#" * 60)
         
         # PHASE 3: Atrophy Simulation
-        print(f"\n--- PHASE 3: SIMULATING {encoder.upper()} ATROPHY ({depth.upper()} LAYERS) ---")
+        print(f"\n--- PHASE 3: SIMULATING {encoder.upper()} ATROPHY AT THE TRANSMODAL HUB ---")
         df_results = harness.run_simulation(
-            encoder_type=encoder, 
-            depth=depth
+            encoder_type=encoder
         )
         
         # Save distinct CSV data for each specific permutation
-        results_filename = f"{encoder}_{depth}_simulation.csv"
+        results_filename = f"{encoder}_hub_simulation.csv"
         results_path = os.path.join("./data/results", results_filename)
         os.makedirs("./data/results", exist_ok=True)
         df_results.to_csv(results_path, index=False)
         print(f"[+] Results safely stored at: {results_path}")
 
         # PHASE 4: Generating Thesis Figures
-        print(f"\n--- PHASE 4: PLOTTING DECAY CURVE FOR {encoder.upper()} ({depth.upper()}) ---")
-        # Naming the plot explicitly to prevent overwriting previous runs
+        print(f"\n--- PHASE 4: PLOTTING DECAY CURVE FOR {encoder.upper()} HUB ---")
         plot_clinical_decay(csv_path=results_path, output_dir="./data/results/")
         
     print("\n" + "=" * 70)

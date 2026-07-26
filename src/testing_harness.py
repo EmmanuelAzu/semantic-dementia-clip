@@ -39,10 +39,12 @@ class TestingHarness:
             return "Domain Error"
         else:
             return "Domain Collapse"
+        
+    # ... (Keep __init__ and classify_error exactly as they were) ...
 
-    def run_simulation(self, encoder_type="text", depth="global", max_pruning=0.9, step=0.1):
-        """Runs the progressive atrophy simulation."""
-        print(f"\n[*] Starting Atrophy Simulation | Target: {encoder_type.upper()} | Depth: {depth.upper()}")
+    def run_simulation(self, encoder_type="text", max_pruning=0.9, step=0.1):
+        """Runs the progressive atrophy simulation on the transmodal hub."""
+        print(f"\n[*] Starting Atrophy Simulation | Target Hub: {encoder_type.upper()}")
         
         results = []
         pruning_levels = [round(x * step, 2) for x in range(int(max_pruning / step) + 1)]
@@ -54,8 +56,8 @@ class TestingHarness:
         for p in pruning_levels:
             print(f"    -> Testing Atrophy Level: {p*100:.0f}%")
             
-            # 1. Damage the network
-            atrophied_model = self.pruning_engine.get_pruned_model(amount=p, encoder_type=encoder_type, depth=depth)
+            # 1. Damage the network hub
+            atrophied_model = self.pruning_engine.get_pruned_model(amount=p, encoder_type=encoder_type)
             atrophied_model.eval()
             
             # 2. Resolve Visual Memory Index based on Atrophy Target
@@ -124,7 +126,7 @@ if __name__ == "__main__":
         index_tensor_path="./data/processed/image_index.pt"
     )
     
-    df_results = harness.run_simulation(encoder_type="text", depth="global")
+    df_results = harness.run_simulation(encoder_type="text")
     
     os.makedirs("./data/results", exist_ok=True)
     df_results.to_csv("./data/results/aphasia_simulation.csv", index=False)
