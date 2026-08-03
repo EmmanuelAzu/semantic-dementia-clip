@@ -30,9 +30,10 @@ class CLIPPruningEngine:
             print(f"[Warning] No target linear weights matched encoder_type='{encoder_type}'.")
             return pruned_model
 
-        # Apply unstructured L1 magnitude-based pruning
+        # Apply STRUCTURED pruning to kill specific dimensions of the embedding space
         for module, param_name in target_layers:
-            prune.l1_unstructured(module, name=param_name, amount=amount)
+            # n=2 uses L2 magnitude, dim=1 targets the 512-D output space directly
+            prune.ln_structured(module, name=param_name, amount=amount, n=2, dim=1)
             # Make pruning permanent
             prune.remove(module, name=param_name)
 
@@ -45,12 +46,12 @@ class CLIPPruningEngine:
         """
         targets = []
 
-        # Target 1: Text projection matrix (shape: [512, 512])
+        # Target 1: Text projection matrix (shape: [transformer_width, 512])
         if encoder_type in ["text", "both"]:
             if hasattr(model, "text_projection") and model.text_projection is not None:
                 targets.append((model, "text_projection"))
 
-        # Target 2: Vision projection matrix (shape: [768, 512])
+        # Target 2: Vision projection matrix (shape: [vision_width, 512])
         if encoder_type in ["vision", "both"]:
             if hasattr(model.visual, "proj") and model.visual.proj is not None:
                 targets.append((model.visual, "proj"))

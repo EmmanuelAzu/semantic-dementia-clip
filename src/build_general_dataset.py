@@ -13,47 +13,54 @@ class FastGeneralDatasetBuilder:
     def __init__(self, workspace_dir="./data"):
         self.zip_path = os.path.join(workspace_dir, "tiny-imagenet-200.zip")
         self.raw_output_dir = os.path.join(workspace_dir, "raw")
-        self.metadata_path = "./tests/metadata_raw.csv"
+        self.metadata_path = "./data/processed/metadata_processed.csv"
         
         os.makedirs(self.raw_output_dir, exist_ok=True)
+        os.makedirs(os.path.dirname(self.metadata_path), exist_ok=True)
 
-    def get_taxonomy_from_wnid(self, wnid):
-        """Dynamically extracts a 4-tier taxonomy using WordNet's hypernym tree."""
-        try:
-            offset = int(wnid[1:])
-            synset = wn.synset_from_pos_and_offset('n', offset)
-            paths = synset.hypernym_paths()
-            if not paths: return None
+        # Curated Tiny-ImageNet WNIDs mapped to dense coordinate clusters
+        # Ensures dense sibling neighborhoods in the memory index (~100 images total)
+        self.target_taxonomy = {
+            # LIVING - CANINES
+            "n02106662": {"domain": "Living", "superordinate": "Animal", "coordinate": "Canine", "specific": "German Shepherd"},
+            "n02113712": {"domain": "Living", "superordinate": "Animal", "coordinate": "Canine", "specific": "Miniature Poodle"},
+            "n02099601": {"domain": "Living", "superordinate": "Animal", "coordinate": "Canine", "specific": "Golden Retriever"},
             
-            names = [s.name().split('.')[0] for s in paths[0]]
+            # LIVING - FELINES
+            "n02123045": {"domain": "Living", "superordinate": "Animal", "coordinate": "Feline", "specific": "Tabby Cat"},
+            "n02124075": {"domain": "Living", "superordinate": "Animal", "coordinate": "Feline", "specific": "Egyptian Cat"},
             
-            # Domain
-            if 'organism' in names or 'living_thing' in names: domain = "living"
-            elif 'artifact' in names or 'object' in names or 'matter' in names: domain = "non-living"
-            else: domain = "other"
-                
-            superordinate = names[4] if len(names) > 4 else names[-1]
-            basic = names[-2] if len(names) > 1 else names[-1]
-            specific = names[-1]
+            # LIVING - ARTHROPODS
+            "n01770393": {"domain": "Living", "superordinate": "Animal", "coordinate": "Arthropod", "specific": "Scorpion"},
+            "n01773504": {"domain": "Living", "superordinate": "Animal", "coordinate": "Arthropod", "specific": "Tarantula"},
             
-            return {"domain": domain, "superordinate": superordinate, "basic": basic, "specific": specific}
-        except Exception:
-            return None
+            # LIVING - AQUATIC / BIRDS
+            "n01443537": {"domain": "Living", "superordinate": "Animal", "coordinate": "Aquatic", "specific": "Goldfish"},
+            "n02007558": {"domain": "Living", "superordinate": "Animal", "coordinate": "Bird", "specific": "Flamingo"},
 
-    def build_dataset(self, max_images_per_class=10):
-        print("[*] Reading zip file dynamically in memory (bypassing Windows Explorer)...")
+            # NON-LIVING - VEHICLES
+            "n02691156": {"domain": "Non-Living", "superordinate": "Vehicle", "coordinate": "Automobile", "specific": "Airplane"},
+            "n04254680": {"domain": "Non-Living", "superordinate": "Vehicle", "coordinate": "Automobile", "specific": "Sports Car"},
+            "n03977966": {"domain": "Non-Living", "superordinate": "Vehicle", "coordinate": "Automobile", "specific": "Police Van"},
+            "n03791053": {"domain": "Non-Living", "superordinate": "Vehicle", "coordinate": "Automobile", "specific": "Motor Scooter"},
+
+            # NON-LIVING - STRUCTURES / OBJECTS
+            "n02808440": {"domain": "Non-Living", "superordinate": "Object", "coordinate": "Fixture", "specific": "Bathtub"},
+            "n03085013": {"domain": "Non-Living", "superordinate": "Object", "coordinate": "Electronics", "specific": "Computer Keyboard"},
+            "n03888257": {"domain": "Non-Living", "superordinate": "Object", "coordinate": "Gear", "specific": "Parachute"}
+        }
+
+    def build_dataset(self, max_images_per_class=6):
+        print("[*] Reading zip file dynamically in memory...")
         
         if not os.path.exists(self.zip_path):
-            print(f"[!] Error: Cannot find {self.zip_path}. Please make sure it's in the data folder.")
+            print(f"[!] Error: Cannot find {self.zip_path}. Please place it in the data folder.")
             return
 
         records = []
         
         with zipfile.ZipFile(self.zip_path, 'r') as z:
-            # Get list of all files in the zip without extracting them
             all_files = z.namelist()
-            
-            # Find only the training images
             train_files = [f for f in all_files if f.startswith("tiny-imagenet-200/train/") and f.endswith(".JPEG")]
             
             # Group files by their WordNet ID (Class)
@@ -61,23 +68,22 @@ class FastGeneralDatasetBuilder:
             for f in train_files:
                 parts = f.split('/')
                 wnid = parts[2]
-                class_files[wnid].append(f)
+                if wnid in self.target_taxonomy:  # Only collect target WNIDs
+                    class_files[wnid].append(f)
                 
-            print(f"[*] Found {len(class_files)} classes. Filtering taxonomy and extracting target images...")
+            print(f"[*] Found {len(class_files)} target sibling classes. Extracting {max_images_per_class} images per class...")
             
-            # Only process the exact number of files we need
-            for wnid, files in tqdm(class_files.items(), desc="Building Semantic Space"):
-                taxonomy = self.get_taxonomy_from_wnid(wnid)
-                if not taxonomy: continue
-                    
+            for wnid, files in tqdm(class_files.items(), desc="Building Fine-Grained Semantic Space"):
+                taxonomy = self.target_taxonomy[wnid]
                 selected_files = files[:max_images_per_class]
                 
                 for zip_file_path in selected_files:
                     img_name = os.path.basename(zip_file_path)
-                    new_filename = f"{taxonomy['specific']}_{img_name}"
+                    clean_specific_name = taxonomy['specific'].lower().replace(' ', '_')
+                    new_filename = f"{clean_specific_name}_{img_name}"
                     dest_img_path = os.path.join(self.raw_output_dir, new_filename)
                     
-                    # Extract ONLY this specific file directly from the zip memory stream
+                    # Extract directly from zip memory stream
                     with z.open(zip_file_path) as source, open(dest_img_path, "wb") as target:
                         target.write(source.read())
                         
@@ -85,18 +91,16 @@ class FastGeneralDatasetBuilder:
                         "filename": new_filename,
                         "domain": taxonomy['domain'],
                         "superordinate": taxonomy['superordinate'],
-                        "basic": taxonomy['basic'],
+                        "coordinate": taxonomy['coordinate'],
                         "specific": taxonomy['specific']
                     })
 
         df = pd.DataFrame(records)
-        df = df[df['domain'] != 'other'] 
         df.to_csv(self.metadata_path, index=False)
         
-        print(f"\n[+] SUCCESS: Bypassed Windows extraction!")
-        print(f"[+] Extracted exactly {len(df)} clinically-mapped images in record time.")
-        print(f"[+] Taxonomy Index File written to: {self.metadata_path}")
+        print(f"\n[+] SUCCESS: Dataset built with {len(df)} images across {len(class_files)} classes.")
+        print(f"[+] Multi-tier taxonomy saved to: {self.metadata_path}")
 
 if __name__ == "__main__":
     builder = FastGeneralDatasetBuilder()
-    builder.build_dataset(max_images_per_class=10) # 10 images * ~200 classes = ~2000 total images
+    builder.build_dataset(max_images_per_class=6)  # 16 classes * 6 images = 96 total images
