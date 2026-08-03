@@ -10,6 +10,7 @@ sys.path.append(PROJECT_ROOT)
 
 from src.testing_harness import TestingHarness
 from src.generate_tsne import generate_tsne_grid
+from src.generate_shared_space_progression import generate_shared_progression_grid
 
 def plot_decay_curves(df_results: pd.DataFrame, title: str, output_path: str):
     """Generates the hierarchical decay curve plot for a simulation run."""
@@ -97,6 +98,10 @@ def run_master_pipeline():
         metadata_path=metadata_path,
         output_plot_path=os.path.join(results_dir, "vision_hub_tsne_grid.png"),
         encoder_type="vision"
+    )
+    generate_shared_progression_grid(
+        encoder_type="joint", # Or "vision" / "joint"
+        pruning_levels=[0.0, 0.25, 0.5, 0.75,0.9]
     )
     
     print("\n============================================================")

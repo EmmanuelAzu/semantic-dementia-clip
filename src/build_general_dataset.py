@@ -1,106 +1,126 @@
+"""
+build_general_dataset.py
+------------------------
+Extracts hand-drawable, easily recognizable classes verified to exist in Tiny-ImageNet-200.
+Generates metadata_processed.csv with unified schema headers.
+"""
+
 import os
+import io
+import json
 import zipfile
 import pandas as pd
-import nltk
-from nltk.corpus import wordnet as wn
-from collections import defaultdict
+from PIL import Image
 from tqdm import tqdm
 
-# Download WordNet data
-nltk.download('wordnet', quiet=True)
+# Dynamically resolve project root directory
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 
-class FastGeneralDatasetBuilder:
-    def __init__(self, workspace_dir="./data"):
-        self.zip_path = os.path.join(workspace_dir, "tiny-imagenet-200.zip")
-        self.raw_output_dir = os.path.join(workspace_dir, "raw")
-        self.metadata_path = "./data/processed/metadata_processed.csv"
+# 24 Curated WNIDs strictly present in Tiny-ImageNet-200
+# Organized into simple, distinct, hand-drawable concept pairs
+TINY_IMAGENET_DRAWABLE_TAXONOMY = {
+    # --- LIVING DOMAIN ---
+    # 1. Mammals (Warm Reds)
+    "n02123045": {"specific": "Tabby Cat", "coordinate": "Mammal", "superordinate": "Animal", "domain": "Living"},
+    "n02124075": {"specific": "Egyptian Cat", "coordinate": "Mammal", "superordinate": "Animal", "domain": "Living"},
+    "n02106662": {"specific": "German Shepherd", "coordinate": "Mammal", "superordinate": "Animal", "domain": "Living"},
+    "n02099601": {"specific": "Golden Retriever", "coordinate": "Mammal", "superordinate": "Animal", "domain": "Living"},
+    
+    # 2. Non-Mammals (Cool Blues)
+    "n01443537": {"specific": "Goldfish", "coordinate": "Non-Mammal", "superordinate": "Animal", "domain": "Living"},
+    "n01641577": {"specific": "Bullfrog", "coordinate": "Non-Mammal", "superordinate": "Animal", "domain": "Living"},
+    "n01770393": {"specific": "Scorpion", "coordinate": "Non-Mammal", "superordinate": "Animal", "domain": "Living"},
+    "n01774750": {"specific": "Tarantula", "coordinate": "Non-Mammal", "superordinate": "Animal", "domain": "Living"},
+
+    # 3. Flora & Food (Greens)
+    "n07749582": {"specific": "Lemon", "coordinate": "Flora & Food", "superordinate": "Plant", "domain": "Living"},
+    "n07753592": {"specific": "Banana", "coordinate": "Flora & Food", "superordinate": "Plant", "domain": "Living"},
+    "n07583066": {"specific": "Guacamole", "coordinate": "Flora & Food", "superordinate": "Plant", "domain": "Living"},
+    "n07920052": {"specific": "Espresso", "coordinate": "Flora & Food", "superordinate": "Plant", "domain": "Living"},
+
+    # --- NON-LIVING DOMAIN ---
+    # 4. Land Vehicles (Oranges)
+    "n04254680": {"specific": "Sports Car", "coordinate": "Land Vehicle", "superordinate": "Vehicle", "domain": "Non-Living"},
+    "n03977966": {"specific": "Police Van", "coordinate": "Land Vehicle", "superordinate": "Vehicle", "domain": "Non-Living"},
+    "n03791053": {"specific": "Motor Scooter", "coordinate": "Land Vehicle", "superordinate": "Vehicle", "domain": "Non-Living"},
+    "n03393912": {"specific": "Freight Car", "coordinate": "Land Vehicle", "superordinate": "Vehicle", "domain": "Non-Living"},
+
+    # 5. Non-Land Vehicles (Sky-Blues)
+    "n02691156": {"specific": "Airplane", "coordinate": "Non-Land Vehicle", "superordinate": "Vehicle", "domain": "Non-Living"},
+    "n02950826": {"specific": "Catamaran", "coordinate": "Non-Land Vehicle", "superordinate": "Vehicle", "domain": "Non-Living"},
+    "n03637318": {"specific": "Lifeboat", "coordinate": "Non-Land Vehicle", "superordinate": "Vehicle", "domain": "Non-Living"},
+    "n03445924": {"specific": "Gondola", "coordinate": "Non-Land Vehicle", "superordinate": "Vehicle", "domain": "Non-Living"},
+
+    # 6. Home & Furniture (Purples)
+    "n04099969": {"specific": "Rocking Chair", "coordinate": "Home & Furniture", "superordinate": "Artifact", "domain": "Non-Living"},
+    "n03201208": {"specific": "Dining Table", "coordinate": "Home & Furniture", "superordinate": "Artifact", "domain": "Non-Living"},
+    "n02808440": {"specific": "Bathtub", "coordinate": "Home & Furniture", "superordinate": "Artifact", "domain": "Non-Living"},
+    "n02948072": {"specific": "Candle", "coordinate": "Home & Furniture", "superordinate": "Artifact", "domain": "Non-Living"}
+}
+
+def extract_dataset(zip_path, extract_dir, max_images_per_class=25):
+    os.makedirs(extract_dir, exist_ok=True)
+    raw_images_dir = os.path.join(extract_dir, "raw")
+    os.makedirs(raw_images_dir, exist_ok=True)
+    
+    extracted_records = []
+    
+    with zipfile.ZipFile(zip_path, 'r') as z:
+        all_files = z.namelist()
         
-        os.makedirs(self.raw_output_dir, exist_ok=True)
-        os.makedirs(os.path.dirname(self.metadata_path), exist_ok=True)
-
-        # Curated Tiny-ImageNet WNIDs mapped to dense coordinate clusters
-        # Ensures dense sibling neighborhoods in the memory index (~100 images total)
-        self.target_taxonomy = {
-            # LIVING - CANINES
-            "n02106662": {"domain": "Living", "superordinate": "Animal", "coordinate": "Canine", "specific": "German Shepherd"},
-            "n02113712": {"domain": "Living", "superordinate": "Animal", "coordinate": "Canine", "specific": "Miniature Poodle"},
-            "n02099601": {"domain": "Living", "superordinate": "Animal", "coordinate": "Canine", "specific": "Golden Retriever"},
-            
-            # LIVING - FELINES
-            "n02123045": {"domain": "Living", "superordinate": "Animal", "coordinate": "Feline", "specific": "Tabby Cat"},
-            "n02124075": {"domain": "Living", "superordinate": "Animal", "coordinate": "Feline", "specific": "Egyptian Cat"},
-            
-            # LIVING - ARTHROPODS
-            "n01770393": {"domain": "Living", "superordinate": "Animal", "coordinate": "Arthropod", "specific": "Scorpion"},
-            "n01773504": {"domain": "Living", "superordinate": "Animal", "coordinate": "Arthropod", "specific": "Tarantula"},
-            
-            # LIVING - AQUATIC / BIRDS
-            "n01443537": {"domain": "Living", "superordinate": "Animal", "coordinate": "Aquatic", "specific": "Goldfish"},
-            "n02007558": {"domain": "Living", "superordinate": "Animal", "coordinate": "Bird", "specific": "Flamingo"},
-
-            # NON-LIVING - VEHICLES
-            "n02691156": {"domain": "Non-Living", "superordinate": "Vehicle", "coordinate": "Automobile", "specific": "Airplane"},
-            "n04254680": {"domain": "Non-Living", "superordinate": "Vehicle", "coordinate": "Automobile", "specific": "Sports Car"},
-            "n03977966": {"domain": "Non-Living", "superordinate": "Vehicle", "coordinate": "Automobile", "specific": "Police Van"},
-            "n03791053": {"domain": "Non-Living", "superordinate": "Vehicle", "coordinate": "Automobile", "specific": "Motor Scooter"},
-
-            # NON-LIVING - STRUCTURES / OBJECTS
-            "n02808440": {"domain": "Non-Living", "superordinate": "Object", "coordinate": "Fixture", "specific": "Bathtub"},
-            "n03085013": {"domain": "Non-Living", "superordinate": "Object", "coordinate": "Electronics", "specific": "Computer Keyboard"},
-            "n03888257": {"domain": "Non-Living", "superordinate": "Object", "coordinate": "Gear", "specific": "Parachute"}
-        }
-
-    def build_dataset(self, max_images_per_class=6):
-        print("[*] Reading zip file dynamically in memory...")
+        found_classes = [wnid for wnid in TINY_IMAGENET_DRAWABLE_TAXONOMY if any(f"/train/{wnid}/" in f or f"/{wnid}/" in f for f in all_files)]
+        print(f"[*] Found {len(found_classes)} / {len(TINY_IMAGENET_DRAWABLE_TAXONOMY)} target classes in zip archive.")
         
-        if not os.path.exists(self.zip_path):
-            print(f"[!] Error: Cannot find {self.zip_path}. Please place it in the data folder.")
-            return
-
-        records = []
-        
-        with zipfile.ZipFile(self.zip_path, 'r') as z:
-            all_files = z.namelist()
-            train_files = [f for f in all_files if f.startswith("tiny-imagenet-200/train/") and f.endswith(".JPEG")]
+        for wnid in tqdm(found_classes, desc="Extracting Images"):
+            tax_info = TINY_IMAGENET_DRAWABLE_TAXONOMY[wnid]
+            class_files = [f for f in all_files if f"/{wnid}/images/" in f and f.endswith('.JPEG')][:max_images_per_class]
             
-            # Group files by their WordNet ID (Class)
-            class_files = defaultdict(list)
-            for f in train_files:
-                parts = f.split('/')
-                wnid = parts[2]
-                if wnid in self.target_taxonomy:  # Only collect target WNIDs
-                    class_files[wnid].append(f)
+            for idx, file_path in enumerate(class_files):
+                img_data = z.read(file_path)
+                img = Image.open(io.BytesIO(img_data)).convert('RGB')
                 
-            print(f"[*] Found {len(class_files)} target sibling classes. Extracting {max_images_per_class} images per class...")
-            
-            for wnid, files in tqdm(class_files.items(), desc="Building Fine-Grained Semantic Space"):
-                taxonomy = self.target_taxonomy[wnid]
-                selected_files = files[:max_images_per_class]
+                clean_name = tax_info['specific'].lower().replace(' ', '_')
+                local_filename = f"{clean_name}_{wnid}_{idx}.jpg"
+                save_path = os.path.join(raw_images_dir, local_filename)
+                img.save(save_path)
                 
-                for zip_file_path in selected_files:
-                    img_name = os.path.basename(zip_file_path)
-                    clean_specific_name = taxonomy['specific'].lower().replace(' ', '_')
-                    new_filename = f"{clean_specific_name}_{img_name}"
-                    dest_img_path = os.path.join(self.raw_output_dir, new_filename)
-                    
-                    # Extract directly from zip memory stream
-                    with z.open(zip_file_path) as source, open(dest_img_path, "wb") as target:
-                        target.write(source.read())
-                        
-                    records.append({
-                        "filename": new_filename,
-                        "domain": taxonomy['domain'],
-                        "superordinate": taxonomy['superordinate'],
-                        "coordinate": taxonomy['coordinate'],
-                        "specific": taxonomy['specific']
-                    })
+                extracted_records.append({
+                    'filepath': save_path,
+                    'filename': local_filename,
+                    'wnid': wnid,
+                    'specific': tax_info['specific'],
+                    'coordinate': tax_info['coordinate'],
+                    'superordinate': tax_info['superordinate'],
+                    'domain': tax_info['domain']
+                })
+                
+    return extracted_records
 
-        df = pd.DataFrame(records)
-        df.to_csv(self.metadata_path, index=False)
+def main():
+    data_dir = os.path.join(PROJECT_ROOT, "data")
+    zip_path = os.path.join(data_dir, "tiny-imagenet-200.zip")
+    
+    if not os.path.exists(zip_path):
+        fallback_zip = os.path.join(data_dir, "raw", "tiny-imagenet-200.zip")
+        if os.path.exists(fallback_zip):
+            zip_path = fallback_zip
+        else:
+            raise FileNotFoundError(f"[!] Could not locate tiny-imagenet-200.zip at {zip_path}")
+            
+    print(f"[*] Extracting dataset from: {zip_path}")
+    records = extract_dataset(zip_path, data_dir, max_images_per_class=25)
+    
+    df = pd.DataFrame(records)
+    csv_path = os.path.join(data_dir, "processed", "metadata_processed.csv")
+    os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+    df.to_csv(csv_path, index=False)
+    
+    tax_path = os.path.join(data_dir, "taxonomy_drawable_32.json")
+    with open(tax_path, 'w') as f:
+        json.dump(TINY_IMAGENET_DRAWABLE_TAXONOMY, f, indent=4)
         
-        print(f"\n[+] SUCCESS: Dataset built with {len(df)} images across {len(class_files)} classes.")
-        print(f"[+] Multi-tier taxonomy saved to: {self.metadata_path}")
+    print(f"\n[+] SUCCESS: Extracted {len(records)} images across {df['wnid'].nunique()} curated classes.")
+    print(f"[+] Metadata saved to: {csv_path}")
 
-if __name__ == "__main__":
-    builder = FastGeneralDatasetBuilder()
-    builder.build_dataset(max_images_per_class=6)  # 16 classes * 6 images = 96 total images
+if __name__ == '__main__':
+    main()

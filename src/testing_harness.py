@@ -1,7 +1,7 @@
 import os
 import sys
 
-# Dynamically resolve and set project root directory
+# Dynamically resolve project root directory
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if PROJECT_ROOT not in sys.path:
     sys.path.append(PROJECT_ROOT)
@@ -9,7 +9,6 @@ if PROJECT_ROOT not in sys.path:
 import torch
 import pandas as pd
 import clip
-from tqdm import tqdm
 from PIL import Image
 from src.pruning_engine import CLIPPruningEngine
 
@@ -41,13 +40,18 @@ class TestingHarness:
         self.base_model, self.preprocess = clip.load("ViT-B/32", device=self.device)
         self.pruning_engine = CLIPPruningEngine(self.base_model)
         
-        # Standard CLIP Prompt Templates for Ensembling (Reduces zero-shot baseline noise)
+        # 10 Standard CLIP Prompt Templates for Ensembling
         self.prompt_templates = [
             "a photo of a {}",
             "a close-up photo of a {}",
             "a rendering of a {}",
             "a picture of a {}",
-            "a good photo of a {}"
+            "a good photo of a {}",
+            "a cropped photo of the {}",
+            "a bright photo of a {}",
+            "a photo of the small {}",
+            "a photo of the large {}",
+            "a detailed photo of a {}"
         ]
         
         # Hierarchical Taxonomic Penalty Scale
@@ -78,7 +82,7 @@ class TestingHarness:
         else:
             return "Domain Collapse"
 
-    def _reindex_visual_memory(self, model, img_dir=None, batch_size=64):
+    def _reindex_visual_memory(self, model, img_dir=None, batch_size=256):
         """Encodes visual memory using a specified atrophied or healthy model state."""
         if img_dir is None:
             img_dir = os.path.join(PROJECT_ROOT, "data", "raw")
@@ -87,7 +91,16 @@ class TestingHarness:
         memory_chunks = []
         
         for idx, row in self.metadata.iterrows():
-            img_path = os.path.join(img_dir, row['filename'])
+            filename = row['filename']
+            img_path = os.path.join(img_dir, filename)
+            
+            # Recursive fallback search if direct path fails
+            if not os.path.exists(img_path):
+                for root, _, files in os.walk(img_dir):
+                    if filename in files:
+                        img_path = os.path.join(root, filename)
+                        break
+            
             if os.path.exists(img_path):
                 img = Image.open(img_path).convert("RGB")
                 batch_images.append(self.preprocess(img))
@@ -104,35 +117,41 @@ class TestingHarness:
         if memory_chunks:
             return torch.cat(memory_chunks, dim=0)
         else:
-            raise FileNotFoundError(f"No valid image files were found in {img_dir} to index.")
+            raise FileNotFoundError(
+                f"No valid image files found in '{img_dir}' matching metadata records. "
+                f"Please ensure dataset images exist or run build_general_dataset.py."
+            )
 
-    def run_simulation(self, encoder_type="joint", max_pruning=0.9, step=0.1, batch_size=64, top_k=5):
+    def run_simulation(self, encoder_type="joint", max_pruning=0.9, step=0.1, batch_size=256, top_k=5):
         """
-        Runs progressive hub atrophy simulation.
+        Runs progressive hub atrophy simulation using vectorized GPU operations.
         
         Parameters:
             encoder_type (str):
                 - "text": Simulates verbal semantic loss (svPPA)
                 - "vision": Simulates visual agnosia
                 - "joint": Simulates true Amodal Semantic Dementia (Bilateral ATL Hub breakdown)
-            max_pruning (float): Maximum fraction of projection weights zeroed out (e.g. 0.9 = 90%)
+            max_pruning (float): Maximum fraction of projection weights zeroed out (0.9 = 90%)
             step (float): Pruning increment step
-            batch_size (int): GPU batch size for memory re-indexing
-            top_k (int): Size of nearest-neighbor neighborhood for continuous cost tracking
+            batch_size (int): GPU batch size for text/image processing
+            top_k (int): Size of nearest-neighbor neighborhood evaluated
         """
-        print(f"\n[*] Starting Atrophy Simulation | Mode: {encoder_type.upper()}")
+        print(f"\n[*] Starting Atrophy Simulation | Mode: {encoder_type.upper()} | Batch Size: {batch_size}")
+        
+        # Test queries: probe every unique specific category in dataset
+        test_queries = self.metadata.drop_duplicates(subset=['specific']).to_dict('records')
+        num_queries = len(test_queries)
+        num_templates = len(self.prompt_templates)
+        
+        print(f"[*] Probe Size: {num_queries} categories x {num_templates} templates = {num_queries * num_templates} total prompt vectors.")
         
         results = []
         pruning_levels = [round(x * step, 2) for x in range(int(max_pruning / step) + 1)]
         
-        # Extract unique specific concepts for testing
-        test_queries = self.metadata.drop_duplicates(subset=['specific']).to_dict('records')
-        print(f"[*] Probing {len(test_queries)} unique specific categories across {len(pruning_levels)} atrophy steps...")
-        
         for p in pruning_levels:
             print(f"    -> Atrophy Level: {p*100:.0f}%")
             
-            # 1. Apply structured L2 pruning to target projection heads
+            # 1. Apply structured L2 pruning
             if encoder_type == "joint":
                 # Prune both modality projection heads to simulate central amodal hub degeneration
                 atrophied_model = self.pruning_engine.get_pruned_model(amount=p, encoder_type="text")
@@ -151,7 +170,37 @@ class TestingHarness:
                     self.baseline_visual_memory = self._reindex_visual_memory(self.base_model, batch_size=batch_size)
                 current_visual_memory = self.baseline_visual_memory
 
-            # Metrics accumulators
+            # 3. Vectorized Prompt Encoding (Batched)
+            all_prompts = []
+            for q in test_queries:
+                for tmpl in self.prompt_templates:
+                    all_prompts.append(tmpl.format(q['specific']))
+            
+            all_tokens = clip.tokenize(all_prompts).to(self.device)
+            
+            encoded_text_chunks = []
+            with torch.no_grad():
+                for i in range(0, len(all_tokens), batch_size):
+                    batch_tokens = all_tokens[i:i + batch_size]
+                    feats = atrophied_model.encode_text(batch_tokens)
+                    feats = feats / feats.norm(dim=-1, keepdim=True)
+                    encoded_text_chunks.append(feats)
+                    
+            # Shape: [num_queries * num_templates, 512]
+            all_text_feats = torch.cat(encoded_text_chunks, dim=0)
+            
+            # Reshape to [num_queries, num_templates, 512] and average across ensemble templates
+            all_text_feats = all_text_feats.view(num_queries, num_templates, -1)
+            ensembled_vectors = all_text_feats.mean(dim=1)
+            ensembled_vectors = ensembled_vectors / ensembled_vectors.norm(dim=-1, keepdim=True)
+            
+            # 4. Vectorized Cosine Similarity & Top-K Extraction
+            # [num_queries, 512] @ [512, num_images] -> [num_queries, num_images]
+            with torch.no_grad():
+                sim_matrix = (100.0 * ensembled_vectors @ current_visual_memory.T).softmax(dim=-1)
+                topk_indices = torch.topk(sim_matrix, k=top_k, dim=-1).indices.cpu().numpy()
+            
+            # 5. Categorical & Continuous Diagnostic Evaluation
             top1_counts = {
                 "Correct": 0, 
                 "Coordinate Error": 0, 
@@ -161,40 +210,24 @@ class TestingHarness:
             }
             total_expected_taxonomic_cost = 0.0
 
-            # 3. Clinical Diagnostic Pass (Prompt Ensembling + Top-K Neighborhood Evaluation)
-            with torch.no_grad():
-                for query_item in test_queries:
-                    # Construct multi-prompt ensemble representation
-                    prompts = [tmpl.format(query_item['specific']) for tmpl in self.prompt_templates]
-                    text_inputs = clip.tokenize(prompts).to(self.device)
-                    
-                    # Encode and normalize ensembled representation
-                    text_features = atrophied_model.encode_text(text_inputs)
-                    text_features = text_features / text_features.norm(dim=-1, keepdim=True)
-                    ensembled_vector = text_features.mean(dim=0, keepdim=True)
-                    ensembled_vector = ensembled_vector / ensembled_vector.norm(dim=-1, keepdim=True)
-                    
-                    # Compute Cosine Similarity against active visual memory space
-                    similarities = (100.0 * ensembled_vector @ current_visual_memory.T).softmax(dim=-1)
-                    
-                    # Retrieve Top-K nearest neighbor indices
-                    topk_indices = torch.topk(similarities, k=top_k, dim=-1).indices.squeeze(0).tolist()
-                    
-                    # Top-1 Categorical Diagnosis
-                    top1_pred_row = self.metadata.iloc[topk_indices[0]]
-                    top1_error = self.classify_error(query_item, top1_pred_row)
-                    top1_counts[top1_error] += 1
-                    
-                    # Top-K Neighborhood Expected Taxonomic Cost Calculation
-                    query_neighborhood_cost = 0.0
-                    for neighbor_idx in topk_indices:
-                        neighbor_row = self.metadata.iloc[neighbor_idx]
-                        err = self.classify_error(query_item, neighbor_row)
-                        query_neighborhood_cost += self.distance_costs[err]
-                    
-                    total_expected_taxonomic_cost += (query_neighborhood_cost / top_k)
-            
-            mean_taxonomic_cost = total_expected_taxonomic_cost / len(test_queries)
+            for q_idx, query_item in enumerate(test_queries):
+                query_topk = topk_indices[q_idx]
+                
+                # Top-1 Categorical Diagnosis
+                top1_row = self.metadata.iloc[query_topk[0]]
+                top1_err = self.classify_error(query_item, top1_row)
+                top1_counts[top1_err] += 1
+                
+                # Top-K Expected Taxonomic Distance Cost
+                q_cost = 0.0
+                for n_idx in query_topk:
+                    neighbor_row = self.metadata.iloc[n_idx]
+                    err = self.classify_error(query_item, neighbor_row)
+                    q_cost += self.distance_costs[err]
+                
+                total_expected_taxonomic_cost += (q_cost / top_k)
+
+            mean_taxonomic_cost = total_expected_taxonomic_cost / num_queries
             
             results.append({
                 "Pruning_Level": p,
@@ -208,7 +241,7 @@ if __name__ == "__main__":
     harness = TestingHarness()
     
     # Run joint amodal simulation (true Semantic Dementia)
-    df_sd = harness.run_simulation(encoder_type="joint", step=0.1, top_k=5)
+    df_sd = harness.run_simulation(encoder_type="joint", step=0.1, batch_size=256, top_k=10)
     
     results_dir = os.path.join(PROJECT_ROOT, "data", "results")
     os.makedirs(results_dir, exist_ok=True)
@@ -216,6 +249,6 @@ if __name__ == "__main__":
     out_csv = os.path.join(results_dir, "amodal_sd_simulation.csv")
     df_sd.to_csv(out_csv, index=False)
     
-    print(f"\n[+] True Semantic Dementia (Joint Hub) Simulation Complete! Results saved to {out_csv}")
+    print(f"\n[+] True Semantic Dementia (Joint Hub) Simulation Complete! Saved to {out_csv}")
     print("\n--- CLINICAL SD DECAY TRAJECTORY ---")
     print(df_sd[["Pruning_Level", "Correct", "Coordinate Error", "Superordinate Error", "Domain Error", "Domain Collapse", "Expected_Taxonomic_Cost"]])

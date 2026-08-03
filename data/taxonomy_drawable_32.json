@@ -1,0 +1,146 @@
+{
+    "n02123045": {
+        "specific": "Tabby Cat",
+        "coordinate": "Mammal",
+        "superordinate": "Animal",
+        "domain": "Living"
+    },
+    "n02124075": {
+        "specific": "Egyptian Cat",
+        "coordinate": "Mammal",
+        "superordinate": "Animal",
+        "domain": "Living"
+    },
+    "n02106662": {
+        "specific": "German Shepherd",
+        "coordinate": "Mammal",
+        "superordinate": "Animal",
+        "domain": "Living"
+    },
+    "n02099601": {
+        "specific": "Golden Retriever",
+        "coordinate": "Mammal",
+        "superordinate": "Animal",
+        "domain": "Living"
+    },
+    "n01443537": {
+        "specific": "Goldfish",
+        "coordinate": "Non-Mammal",
+        "superordinate": "Animal",
+        "domain": "Living"
+    },
+    "n01641577": {
+        "specific": "Bullfrog",
+        "coordinate": "Non-Mammal",
+        "superordinate": "Animal",
+        "domain": "Living"
+    },
+    "n01770393": {
+        "specific": "Scorpion",
+        "coordinate": "Non-Mammal",
+        "superordinate": "Animal",
+        "domain": "Living"
+    },
+    "n01774750": {
+        "specific": "Tarantula",
+        "coordinate": "Non-Mammal",
+        "superordinate": "Animal",
+        "domain": "Living"
+    },
+    "n07749582": {
+        "specific": "Lemon",
+        "coordinate": "Flora & Food",
+        "superordinate": "Plant",
+        "domain": "Living"
+    },
+    "n07753592": {
+        "specific": "Banana",
+        "coordinate": "Flora & Food",
+        "superordinate": "Plant",
+        "domain": "Living"
+    },
+    "n07583066": {
+        "specific": "Guacamole",
+        "coordinate": "Flora & Food",
+        "superordinate": "Plant",
+        "domain": "Living"
+    },
+    "n07920052": {
+        "specific": "Espresso",
+        "coordinate": "Flora & Food",
+        "superordinate": "Plant",
+        "domain": "Living"
+    },
+    "n04254680": {
+        "specific": "Sports Car",
+        "coordinate": "Land Vehicle",
+        "superordinate": "Vehicle",
+        "domain": "Non-Living"
+    },
+    "n03977966": {
+        "specific": "Police Van",
+        "coordinate": "Land Vehicle",
+        "superordinate": "Vehicle",
+        "domain": "Non-Living"
+    },
+    "n03791053": {
+        "specific": "Motor Scooter",
+        "coordinate": "Land Vehicle",
+        "superordinate": "Vehicle",
+        "domain": "Non-Living"
+    },
+    "n03393912": {
+        "specific": "Freight Car",
+        "coordinate": "Land Vehicle",
+        "superordinate": "Vehicle",
+        "domain": "Non-Living"
+    },
+    "n02691156": {
+        "specific": "Airplane",
+        "coordinate": "Non-Land Vehicle",
+        "superordinate": "Vehicle",
+        "domain": "Non-Living"
+    },
+    "n02950826": {
+        "specific": "Catamaran",
+        "coordinate": "Non-Land Vehicle",
+        "superordinate": "Vehicle",
+        "domain": "Non-Living"
+    },
+    "n03637318": {
+        "specific": "Lifeboat",
+        "coordinate": "Non-Land Vehicle",
+        "superordinate": "Vehicle",
+        "domain": "Non-Living"
+    },
+    "n03445924": {
+        "specific": "Gondola",
+        "coordinate": "Non-Land Vehicle",
+        "superordinate": "Vehicle",
+        "domain": "Non-Living"
+    },
+    "n04099969": {
+        "specific": "Rocking Chair",
+        "coordinate": "Home & Furniture",
+        "superordinate": "Artifact",
+        "domain": "Non-Living"
+    },
+    "n03201208": {
+        "specific": "Dining Table",
+        "coordinate": "Home & Furniture",
+        "superordinate": "Artifact",
+        "domain": "Non-Living"
+    },
+    "n02808440": {
+        "specific": "Bathtub",
+        "coordinate": "Home & Furniture",
+        "superordinate": "Artifact",
+        "domain": "Non-Living"
+    },
+    "n02948072": {
+        "specific": "Candle",
+        "coordinate": "Home & Furniture",
+        "superordinate": "Artifact",
+        "domain": "Non-Living"
+    }
+}
