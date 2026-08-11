@@ -3,97 +3,203 @@ import os
 import clip
 import numpy as np
 import pandas as pd
-import torch
-from torch.utils.data import Dataset, DataLoader
 from PIL import Image
-
-from src.metrics import (
-    compute_category_breakdown,
-    compute_cka,
-    compute_hierarchical_breakdown,
-    compute_mrr,
-    compute_neighborhood_preservation,
-    compute_top10_breakdown_depth,
-)
-from src.pruning_engine import CLIPPruningEngine
-
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+import torch
+from torch.utils.data import DataLoader, Dataset
+from tqdm import tqdm
 
 
 class EvaluationImageDataset(Dataset):
-    def __init__(self, metadata, preprocess, spec_col):
+    """Dataset loader for evaluation images with relative path resolution."""
+
+    def __init__(self, metadata, preprocess, concept_col="specific"):
         self.metadata = metadata
         self.preprocess = preprocess
-        self.spec_col = spec_col
-        self.valid_rows = []
+
+        if concept_col not in metadata.columns:
+            for alt in ["specific", "basic", "concept", "label", "class"]:
+                if alt in metadata.columns:
+                    concept_col = alt
+                    break
+        self.concept_col = concept_col
+
+        path_col = None
+        for alt in [
+            "filename",
+            "image_path",
+            "filepath",
+            "file_path",
+            "path",
+            "img_path",
+        ]:
+            if alt in metadata.columns:
+                path_col = alt
+                break
+
+        if not path_col:
+            raise ValueError(
+                f"[!] Could not find an image path column in metadata. Present columns: {list(metadata.columns)}"
+            )
+
         self.valid_indices = []
+        self.samples = []
+
+        cwd = os.getcwd()
+        search_dirs = [
+            cwd,
+            os.path.join(cwd, "data"),
+            os.path.join(cwd, "data", "processed"),
+            os.path.join(cwd, "data", "processed", "images"),
+            os.path.join(cwd, "data", "images"),
+            os.path.join(cwd, "data", "raw"),
+            os.path.join(cwd, "data", "tiny-imagenet-200"),
+        ]
 
         for idx, row in metadata.iterrows():
-            img_path = row.get("filepath", None)
-            if not img_path or pd.isna(img_path):
-                if "filename" in row and pd.notna(row["filename"]):
-                    img_path = os.path.join(PROJECT_ROOT, "data", "raw", row["filename"])
-                else:
-                    continue
-            if not os.path.isabs(img_path):
-                img_path = os.path.join(PROJECT_ROOT, img_path)
+            raw_path = str(row.get(path_col, "")).strip()
+            if not raw_path or raw_path.lower() == "nan":
+                continue
 
-            if os.path.exists(img_path):
-                self.valid_rows.append((img_path, row[self.spec_col]))
+            cleaned_rel = raw_path.lstrip("./")
+            candidate_paths = [
+                raw_path,
+                os.path.abspath(raw_path),
+                os.path.join(cwd, cleaned_rel),
+            ]
+            for s_dir in search_dirs:
+                candidate_paths.append(os.path.join(s_dir, cleaned_rel))
+                candidate_paths.append(
+                    os.path.join(s_dir, os.path.basename(raw_path))
+                )
+
+            valid_path = None
+            for p in candidate_paths:
+                if os.path.isfile(p):
+                    valid_path = p
+                    break
+
+            if valid_path:
                 self.valid_indices.append(idx)
+                self.samples.append((valid_path, row[self.concept_col]))
+
+        if len(self.samples) == 0:
+            raise ValueError("[!] No valid image paths found in metadata.")
 
     def __len__(self):
-        return len(self.valid_rows)
+        return len(self.samples)
 
     def __getitem__(self, idx):
-        img_path, concept = self.valid_rows[idx]
-        image = self.preprocess(Image.open(img_path).convert("RGB"))
-        return image, concept
+        img_path, concept = self.samples[idx]
+        image = Image.open(img_path).convert("RGB")
+        image_tensor = self.preprocess(image)
+        return image_tensor, concept
 
 
 class JointSpaceEvaluator:
-    def __init__(self, metadata_path=None, device=None, sample_frac=1.0, seed=42, batch_size=64):
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+    """Evaluates CLIP representation degradation under magnitude pruning."""
+
+    def __init__(
+        self,
+        metadata_path="./data/processed/metadata_processed.csv",
+        model_name="ViT-B/32",
+        device="cpu",
+        batch_size=32,
+        sample_frac=1.0,
+        target_n=None,
+        balance_taxonomically=True,
+    ):
+        self.device = torch.device(device)
         self.batch_size = batch_size
-        
-        if metadata_path is None:
-            metadata_path = os.path.join(PROJECT_ROOT, "data", "processed", "metadata_processed.csv")
-        full_meta = pd.read_csv(metadata_path)
 
-        if sample_frac < 1.0:
-            self.metadata = full_meta.sample(frac=sample_frac, random_state=seed).reset_index(drop=True)
-            print(f"[*] Subsampled dataset to {len(self.metadata)} items ({sample_frac*100}%).")
-        else:
-            self.metadata = full_meta.reset_index(drop=True)
-            print(f"[*] Loaded full evaluation dataset with {len(self.metadata)} samples.")
+        if self.device.type == "cpu":
+            torch.set_num_threads(os.cpu_count() or 4)
 
-        self.base_model, self.preprocess = clip.load("ViT-B/32", device=self.device)
+        print(f"[*] Loading metadata from: {metadata_path}")
+        df = pd.read_csv(metadata_path)
+
+        spec_col = "specific" if "specific" in df.columns else "concept"
+
+        # Equal allocation across object classes
+        if balance_taxonomically and spec_col in df.columns:
+            n_classes = df[spec_col].nunique()
+
+            if target_n is not None and target_n > 0:
+                samples_per_class = max(1, target_n // n_classes)
+            else:
+                samples_per_class = df.groupby(spec_col).size().min()
+
+            df = (
+                df.groupby(spec_col, group_keys=False)
+                .sample(n=samples_per_class, replace=True, random_state=42)
+                .reset_index(drop=True)
+            )
+            print(
+                f"[*] Taxonomically balanced: {len(df)} total samples strictly equalized at {samples_per_class} samples/class across {n_classes} classes."
+            )
+        elif target_n is not None and target_n > 0:
+            df = df.sample(n=target_n, replace=True, random_state=42).reset_index(
+                drop=True
+            )
+            print(f"[*] Oversampled dataset to {len(df)} samples (replace=True).")
+        elif sample_frac < 1.0:
+            df = df.sample(frac=sample_frac, random_state=42).reset_index(
+                drop=True
+            )
+            print(f"[*] Downsampled dataset to {len(df)} samples.")
+
+        self.metadata = df
+
+        print(f"[*] Loading CLIP model ({model_name}) on {self.device}...")
+        self.base_model, self.preprocess = clip.load(
+            model_name, device=self.device
+        )
+        self.base_model.eval()
+
+    def _apply_pruning(self, model, pruning_level):
+        if pruning_level <= 0.0:
+            return model
+
+        pruned_model = copy.deepcopy(model)
+        with torch.no_grad():
+            for name, param in pruned_model.named_parameters():
+                if "weight" in name and param.dim() > 1:
+                    tensor = param.data
+                    abs_tensor = torch.abs(tensor)
+                    threshold = float(
+                        np.quantile(abs_tensor.cpu().numpy(), pruning_level)
+                    )
+                    mask = abs_tensor > threshold
+                    param.data.mul_(mask.float())
+        return pruned_model
 
     def _extract_joint_features(self, model):
         model.eval()
-        spec_col = "specific" if "specific" in self.metadata.columns else "concept"
-        
-        dataset = EvaluationImageDataset(self.metadata, self.preprocess, spec_col)
-        if len(dataset) == 0:
-            raise ValueError("[!] No valid images found in evaluation dataset.")
+        spec_col = (
+            "specific" if "specific" in self.metadata.columns else "concept"
+        )
+        dataset = EvaluationImageDataset(
+            self.metadata, self.preprocess, spec_col
+        )
+        eval_metadata = self.metadata.iloc[dataset.valid_indices].reset_index(
+            drop=True
+        )
 
-        # Sync self.metadata strictly to valid extracted rows
-        self.metadata = self.metadata.iloc[dataset.valid_indices].reset_index(drop=True)
-
-        dataloader = DataLoader(dataset, batch_size=self.batch_size, shuffle=False, num_workers=0, pin_memory=True)
+        dataloader = DataLoader(
+            dataset, batch_size=self.batch_size, shuffle=False, num_workers=0
+        )
 
         img_feats_list, concept_labels = [], []
-        
         with torch.no_grad():
-            for imgs, concepts in dataloader:
+            for imgs, concepts in tqdm(
+                dataloader, desc="Extracting Features", leave=False
+            ):
                 imgs = imgs.to(self.device)
                 feats = model.encode_image(imgs)
                 feats = feats / feats.norm(dim=-1, keepdim=True)
-                img_feats_list.append(feats)
+                img_feats_list.append(feats.cpu())
                 concept_labels.extend(concepts)
 
             img_feats = torch.cat(img_feats_list, dim=0)
-
             unique_concepts = sorted(list(set(concept_labels)))
             text_prompts = [f"a photo of a {c}" for c in unique_concepts]
             text_tokens = clip.tokenize(text_prompts).to(self.device)
@@ -101,69 +207,146 @@ class JointSpaceEvaluator:
             text_feats = model.encode_text(text_tokens)
             text_feats = text_feats / text_feats.norm(dim=-1, keepdim=True)
 
-        return img_feats, text_feats, concept_labels, unique_concepts
+        return (
+            img_feats,
+            text_feats.cpu(),
+            concept_labels,
+            unique_concepts,
+            eval_metadata,
+        )
+
+    def _compute_cka(self, X, Y):
+        X = X - X.mean(dim=0, keepdim=True)
+        Y = Y - Y.mean(dim=0, keepdim=True)
+        hsic_xy = torch.norm(torch.matmul(X.T, Y), p="fro") ** 2
+        hsic_xx = torch.norm(torch.matmul(X.T, X), p="fro") ** 2
+        hsic_yy = torch.norm(torch.matmul(Y.T, Y), p="fro") ** 2
+        denom = torch.sqrt(hsic_xx * hsic_yy)
+        return (hsic_xy / denom).item() if denom != 0 else 0.0
+
+    def _compute_npr(self, X, Y, k=5):
+        dist_X = torch.cdist(X, X)
+        dist_Y = torch.cdist(Y, Y)
+        topk_X = torch.topk(dist_X, k=k + 1, largest=False).indices[:, 1:]
+        topk_Y = torch.topk(dist_Y, k=k + 1, largest=False).indices[:, 1:]
+
+        matches = sum(
+            len(set(topk_X[i].tolist()).intersection(set(topk_Y[i].tolist())))
+            for i in range(len(X))
+        )
+        return matches / (len(X) * k)
 
     def run_eval(self, pruning_levels=[0.0, 0.25, 0.50, 0.75, 0.90, 0.95]):
+        print("[*] Extracting base unpruned features...")
+        ref_img, ref_text, labels, unique_concepts, eval_meta = (
+            self._extract_joint_features(self.base_model)
+        )
+
+        spec_col = (
+            "specific" if "specific" in self.metadata.columns else "concept"
+        )
+        concept_to_idx = {c: i for i, c in enumerate(unique_concepts)}
+        target_indices = torch.tensor([concept_to_idx[c] for c in labels])
+
         results = []
-        base_img_feats, base_text_feats, _, _ = self._extract_joint_features(self.base_model)
-        base_img_np = base_img_feats.float().cpu().numpy()
-        base_text_np = base_text_feats.float().cpu().numpy()
 
-        for p in pruning_levels:
-            p_val = float(p)
-            model_copy = copy.deepcopy(self.base_model)
-            engine = CLIPPruningEngine(model_copy)
-            pruned_model = engine.get_pruned_model(amount=p_val, encoder_type="joint")
+        for p_level in pruning_levels:
+            print(f"\n[+] Evaluating Pruning Level: {p_level * 100:.1f}%")
+            pruned_model = self._apply_pruning(self.base_model, p_level)
+            p_img, p_text, _, _, _ = self._extract_joint_features(pruned_model)
 
-            img_feats, text_feats, concept_labels, unique_concepts = self._extract_joint_features(pruned_model)
-            img_np = img_feats.float().cpu().numpy()
-            text_np = text_feats.float().cpu().numpy()
+            sim_matrix = torch.matmul(p_img, p_text.T)
+            top1_preds = torch.argmax(sim_matrix, dim=1)
+            correct_mask = top1_preds == target_indices
 
-            sim_matrix = (img_feats @ text_feats.T).float().cpu().numpy()
-            concept_to_idx = {c: idx for idx, c in enumerate(unique_concepts)}
-            targets = np.array([concept_to_idx[c] for c in concept_labels])
+            # Hierarchical Accuracy Calculations
+            spec_acc = correct_mask.float().mean().item()
 
-            top1_i2t = float((np.argmax(sim_matrix, axis=1) == targets).mean())
-            top5_k = min(5, sim_matrix.shape[1])
-            top5_i2t = float(
-                np.mean([targets[i] in np.argsort(sim_matrix[i])[-top5_k:] for i in range(len(targets))])
+            basic_acc, super_acc = spec_acc, spec_acc
+            if (
+                "basic" in eval_meta.columns
+                and "superordinate" in eval_meta.columns
+            ):
+                basic_correct, super_correct = 0, 0
+                for i, pred_idx in enumerate(top1_preds):
+                    pred_c = unique_concepts[pred_idx.item()]
+                    pred_match = self.metadata[
+                        self.metadata[spec_col] == pred_c
+                    ]
+                    if not pred_match.empty:
+                        p_row = pred_match.iloc[0]
+                        t_row = eval_meta.iloc[i]
+                        if p_row.get("basic") == t_row.get("basic"):
+                            basic_correct += 1
+                        if p_row.get("superordinate") == t_row.get(
+                            "superordinate"
+                        ):
+                            super_correct += 1
+                basic_acc = basic_correct / len(eval_meta)
+                super_acc = super_correct / len(eval_meta)
+
+            # MRR
+            ranks = [
+                1.0
+                / (
+                    (
+                        torch.argsort(sim_matrix[i], descending=True)
+                        == target_indices[i]
+                    )
+                    .nonzero(as_tuple=True)[0]
+                    .item()
+                    + 1
+                )
+                for i in range(len(target_indices))
+            ]
+            mrr = float(np.mean(ranks))
+
+            # Error Taxonomy Classification
+            coord_err, super_err, domain_err, collapse_err = 0, 0, 0, 0
+            for i, is_corr in enumerate(correct_mask):
+                if not is_corr:
+                    pred_c = unique_concepts[top1_preds[i].item()]
+                    t_row = eval_meta.iloc[i]
+                    p_match = self.metadata[self.metadata[spec_col] == pred_c]
+                    if not p_match.empty:
+                        p_row = p_match.iloc[0]
+                        if (
+                            "coordinate" in t_row
+                            and pred_c == t_row.get("coordinate")
+                        ):
+                            coord_err += 1
+                        elif (
+                            "superordinate" in t_row
+                            and p_row.get("superordinate")
+                            == t_row.get("superordinate")
+                        ):
+                            super_err += 1
+                        elif (
+                            "domain" in t_row
+                            and p_row.get("domain") == t_row.get("domain")
+                        ):
+                            domain_err += 1
+                        else:
+                            collapse_err += 1
+                    else:
+                        collapse_err += 1
+
+            results.append(
+                {
+                    "pruning_level": p_level,
+                    "i2t_top1": spec_acc,
+                    "top1_specific_acc": spec_acc,
+                    "top1_basic_acc": basic_acc,
+                    "top1_super_acc": super_acc,
+                    "mrr": mrr,
+                    "cka_vision": self._compute_cka(ref_img, p_img),
+                    "cka_text": self._compute_cka(ref_text, p_text),
+                    "npr_vision": self._compute_npr(ref_img, p_img, k=5),
+                    "coordinate error": coord_err,
+                    "superordinate error": super_err,
+                    "domain error": domain_err,
+                    "domain collapse": collapse_err,
+                }
             )
-
-            t2i_top1_accs = []
-            for c_idx in range(len(unique_concepts)):
-                matching_imgs = np.where(targets == c_idx)[0]
-                if len(matching_imgs) > 0:
-                    retrieved_img = np.argmax(sim_matrix[:, c_idx])
-                    t2i_top1_accs.append(retrieved_img in matching_imgs)
-            top1_t2i = float(np.mean(t2i_top1_accs)) if t2i_top1_accs else 0.0
-
-            mean_cosine = float(np.mean([sim_matrix[i, targets[i]] for i in range(len(targets))]))
-
-            mrr_score = compute_mrr(sim_matrix, targets)
-            cka_vision = compute_cka(base_img_np, img_np)
-            cka_text = compute_cka(base_text_np, text_np)
-            npr_vision = compute_neighborhood_preservation(base_img_np, img_np, k=min(5, len(img_np) - 1))
-            cat_accs = compute_category_breakdown(sim_matrix, targets, self.metadata)
-            hier_metrics = compute_hierarchical_breakdown(sim_matrix, targets, self.metadata)
-            top10_metrics = compute_top10_breakdown_depth(sim_matrix, targets, self.metadata, unique_concepts)
-
-            row_dict = {
-                "pruning_level": p_val,
-                "i2t_top1": top1_i2t,
-                "i2t_top5": top5_i2t,
-                "t2i_top1": top1_t2i,
-                "mean_cosine": mean_cosine,
-                "mrr": mrr_score,
-                "cka_vision": cka_vision,
-                "cka_text": cka_text,
-                "npr_vision": npr_vision,
-            }
-            row_dict.update(hier_metrics)
-            row_dict.update(top10_metrics)
-
-            for cat, acc in cat_accs.items():
-                row_dict[f"acc_{cat}"] = acc
-
-            results.append(row_dict)
 
         return pd.DataFrame(results)

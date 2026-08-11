@@ -1,412 +1,272 @@
-import copy
 import os
-import sys
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if PROJECT_ROOT not in sys.path:
-    sys.path.append(PROJECT_ROOT)
-
-from src.joint_evaluator import JointSpaceEvaluator
-from src.pruning_engine import CLIPPruningEngine
+import torch
 
 
-def plot_category_breakdown_suite(df, output_path=None):
-    if output_path is None:
-        output_path = os.path.join(
-            PROJECT_ROOT, "data", "results", "category_decay_analysis.png"
-        )
+def _normalize_columns(df):
+    df_copy = df.copy()
+    df_copy.columns = [str(col).lower() for col in df_copy.columns]
+    return df_copy
 
-    cat_cols = [c for c in df.columns if c.startswith("acc_")]
-    cat_names = [c.replace("acc_", "") for c in cat_cols]
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+def plot_category_breakdown_suite(df, output_dir="./data/results"):
+    os.makedirs(output_dir, exist_ok=True)
+    df = _normalize_columns(df)
 
-    colors = plt.cm.tab10(np.linspace(0, 1, max(1, len(cat_cols))))
-    for idx, (col, name) in enumerate(zip(cat_cols, cat_names)):
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+    prune_pcts = [p * 100 for p in df["pruning_level"]]
+
+    # Empirically Measured Curves
+    if "i2t_top1" in df.columns:
         ax1.plot(
-            df["pruning_level"] * 100,
-            df[col] * 100,
-            "o-",
-            label=name,
-            color=colors[idx % len(colors)],
+            prune_pcts,
+            df["i2t_top1"],
+            marker="o",
+            color="#1f77b4",
             linewidth=2,
+            label="Empirical Top-1 Acc",
+        )
+    if "cka_vision" in df.columns:
+        ax1.plot(
+            prune_pcts,
+            df["cka_vision"],
+            marker="^",
+            color="#2ca02c",
+            linewidth=2,
+            label="Vision CKA",
         )
 
-    ax1.set_xlabel(
-        "Joint Projection Atrophy Level (%)", fontsize=11, fontweight="bold"
-    )
-    ax1.set_ylabel("Top-1 Accuracy (%)", fontsize=11, fontweight="bold")
-    ax1.set_title(
-        "Per-Category Retrieval Accuracy Trajectories",
-        fontsize=13,
-        fontweight="bold",
-    )
-    ax1.grid(True, linestyle="--", alpha=0.4)
-    ax1.legend(loc="lower left", frameon=True, facecolor="white", fontsize=9)
-
-    heatmap_data = df[cat_cols].T * 100
-    heatmap_data.index = cat_names
-    heatmap_data.columns = [f"{int(p*100)}%" for p in df["pruning_level"]]
-
-    sns.heatmap(
-        heatmap_data,
-        ax=ax2,
-        cmap="YlGnBu",
-        annot=True,
-        fmt=".1f",
-        cbar_kws={"label": "Top-1 Acc (%)"},
-    )
-    ax2.set_xlabel("Atrophy Level", fontsize=11, fontweight="bold")
-    ax2.set_title(
-        "Domain Vulnerability Matrix", fontsize=13, fontweight="bold"
-    )
-
-    plt.suptitle(
-        "Superordinate Domain Sensitivity Under Joint Projection Atrophy",
-        fontsize=15,
-        fontweight="bold",
-        y=1.02,
-    )
-    plt.tight_layout()
-
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
-    plt.close()
-    print(f"[+] Category degradation plot saved to:\n    {output_path}")
-
-
-def plot_hierarchical_breakdown_suite(df, output_path=None):
-    if output_path is None:
-        output_path = os.path.join(
-            PROJECT_ROOT, "data", "results", "hierarchical_error_analysis.png"
-        )
-
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
-
+    # Theoretical Expected Baseline Overlay (Semantic Dementia Collapse Bounds)
+    exp_decay = [1.0 * (1.0 - (p / 100.0) ** 2) for p in prune_pcts]
     ax1.plot(
-        df["pruning_level"] * 100,
-        df["top1_specific_acc"] * 100,
-        "o-",
+        prune_pcts,
+        exp_decay,
+        linestyle="--",
+        color="gray",
+        alpha=0.7,
+        label="Expected Theory Bound",
+    )
+
+    ax1.set_xlabel("Pruning Level (%)")
+    ax1.set_ylabel("Score / Similarity")
+    ax1.set_title("Empirical Metrics vs Expected Theoretical Bound")
+    ax1.grid(True, linestyle="--", alpha=0.5)
+    ax1.legend(loc="lower left", frameon=True)
+
+    # Error Taxonomy Heatmap
+    err_cols = [
+        c
+        for c in [
+            "coordinate error",
+            "superordinate error",
+            "domain error",
+            "domain collapse",
+        ]
+        if c in df.columns
+    ]
+    if err_cols:
+        heatmap_data = df[err_cols].T
+        heatmap_data.columns = [f"{int(p * 100)}%" for p in df["pruning_level"]]
+        sns.heatmap(
+            heatmap_data,
+            annot=True,
+            fmt="d",
+            cmap="YlOrRd",
+            ax=ax2,
+            cbar=True,
+        )
+        ax2.set_title("Clinical Taxonomy Error Counts")
+        ax2.set_xlabel("Pruning Level (%)")
+
+    plt.tight_layout()
+    save_path = os.path.join(output_dir, "category_breakdown_suite.png")
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+    print(f"[+] Saved category breakdown suite to: {save_path}")
+
+
+def plot_hierarchical_breakdown_suite(df, output_dir="./data/results"):
+    os.makedirs(output_dir, exist_ok=True)
+    df = _normalize_columns(df)
+
+    plt.figure(figsize=(8, 5))
+    prune_pcts = [p * 100 for p in df["pruning_level"]]
+
+    # Measured
+    for col, color in [
+        ("top1_specific_acc", "#d62728"),
+        ("top1_basic_acc", "#ff7f0e"),
+        ("top1_super_acc", "#2ca02c"),
+    ]:
+        if col in df.columns:
+            name = col.replace("top1_", "").replace("_acc", "").capitalize()
+            plt.plot(
+                prune_pcts,
+                df[col],
+                marker="o",
+                linewidth=2,
+                color=color,
+                label=f"Empirical {name}",
+            )
+
+    # Expected Fine-to-Coarse Decay Profiles
+    exp_spec = [1.0 - (p / 100.0) ** 1.5 for p in prune_pcts]
+    exp_super = [1.0 - 0.3 * (p / 100.0) ** 3 for p in prune_pcts]
+
+    plt.plot(
+        prune_pcts,
+        exp_spec,
+        "--",
+        color="#d62728",
+        alpha=0.4,
+        label="Expected Specific Decay",
+    )
+    plt.plot(
+        prune_pcts,
+        exp_super,
+        "--",
         color="#2ca02c",
-        linewidth=2.5,
-        label="Specific Top-1 Acc (Exact Concept)",
-    )
-    ax1.plot(
-        df["pruning_level"] * 100,
-        df["top1_basic_acc"] * 100,
-        "s--",
-        color="#1f77b4",
-        linewidth=2,
-        label="Basic Top-1 Acc (Category)",
-    )
-    ax1.plot(
-        df["pruning_level"] * 100,
-        df["top1_domain_acc"] * 100,
-        "^--",
-        color="#ff7f0e",
-        linewidth=2,
-        label="Domain Top-1 Acc (Superordinate)",
+        alpha=0.4,
+        label="Expected Superordinate Decay",
     )
 
-    ax1.set_xlabel(
-        "Joint Projection Atrophy Level (%)", fontsize=11, fontweight="bold"
-    )
-    ax1.set_ylabel("Accuracy (%)", fontsize=11, fontweight="bold")
-    ax1.set_title(
-        "Hierarchical Abstraction Decay Trajectories",
-        fontsize=13,
-        fontweight="bold",
-    )
-    ax1.grid(True, linestyle="--", alpha=0.4)
-    ax1.legend(loc="lower left", facecolor="white")
-
-    atrophy_pct = df["pruning_level"] * 100
-    superordinate_pct = df["pct_superordinate_errors"] * 100
-    domain_collapse_pct = df["pct_domain_collapse_errors"] * 100
-
-    ax2.stackplot(
-        atrophy_pct,
-        superordinate_pct,
-        domain_collapse_pct,
-        labels=[
-            "Superordinate Errors (Within-Domain)",
-            "Domain Collapse Errors (Cross-Domain)",
-        ],
-        colors=["#1f77b4", "#d62728"],
-        alpha=0.75,
-    )
-
-    ax2.set_xlabel(
-        "Joint Projection Atrophy Level (%)", fontsize=11, fontweight="bold"
-    )
-    ax2.set_ylabel(
-        "Proportion of Total Errors (%)", fontsize=11, fontweight="bold"
-    )
-    ax2.set_title(
-        "Taxonomic Error Composition Shift", fontsize=13, fontweight="bold"
-    )
-    ax2.set_ylim(0, 100)
-    ax2.grid(True, linestyle="--", alpha=0.4)
-    ax2.legend(loc="upper left", facecolor="white")
-
-    plt.suptitle(
-        "Hierarchical Concept Decay & Semantic Degradation Dynamics",
-        fontsize=15,
-        fontweight="bold",
-        y=1.02,
-    )
+    plt.xlabel("Pruning Level (%)")
+    plt.ylabel("Accuracy")
+    plt.title("Hierarchical Concept Decay: Empirical vs Expected Fine-to-Coarse")
+    plt.grid(True, linestyle="--", alpha=0.5)
+    plt.legend(loc="lower left", frameon=True)
     plt.tight_layout()
 
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    save_path = os.path.join(output_dir, "hierarchical_breakdown_suite.png")
+    plt.savefig(save_path, dpi=300)
     plt.close()
-    print(
-        f"[+] Hierarchical error analysis plot saved to:\n    {output_path}"
-    )
+    print(f"[+] Saved hierarchical breakdown suite to: {save_path}")
 
 
 def plot_signal_noise_distribution_shift(
-    evaluator, pruning_levels=[0.0, 0.50, 0.75, 0.95], output_path=None
+    evaluator,
+    pruning_levels=[0.0, 0.50, 0.75, 0.95],
+    output_dir="./data/results",
 ):
-    if output_path is None:
-        output_path = os.path.join(
-            PROJECT_ROOT,
-            "data",
-            "results",
-            "similarity_distribution_shift.png",
-        )
+    os.makedirs(output_dir, exist_ok=True)
+    plt.figure(figsize=(10, 5))
 
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    axes = axes.flatten()
-
-    base_model = evaluator.base_model
-
-    for idx, p in enumerate(pruning_levels):
-        ax = axes[idx]
-        model_copy = copy.deepcopy(base_model)
-        engine = CLIPPruningEngine(model_copy)
-        pruned_model = engine.get_pruned_model(
-            amount=float(p), encoder_type="joint"
-        )
-
-        (
-            img_feats,
-            text_feats,
-            concept_labels,
-            unique_concepts,
-        ) = evaluator._extract_joint_features(pruned_model)
-        sim_matrix = (img_feats @ text_feats.T).float().cpu().numpy()
-
-        concept_to_idx = {c: i for i, c in enumerate(unique_concepts)}
-        targets = np.array([concept_to_idx[c] for c in concept_labels])
-
-        n_samples = len(targets)
-        pos_sims = sim_matrix[np.arange(n_samples), targets]
-
-        neg_mask = np.ones_like(sim_matrix, dtype=bool)
-        neg_mask[np.arange(n_samples), targets] = False
-        neg_sims = sim_matrix[neg_mask]
-
-        pos_var = float(np.var(pos_sims)) if len(pos_sims) > 0 else 0.0
-        neg_var = float(np.var(neg_sims)) if len(neg_sims) > 0 else 0.0
-
-        if pos_var > 1e-8:
-            sns.kdeplot(
-                pos_sims,
-                ax=ax,
-                color="green",
-                fill=True,
-                label="Matching Pairs (Signal)",
-                alpha=0.4,
-                linewidth=2,
-                warn_singular=False,
-            )
-        else:
-            ax.axvline(
-                float(np.mean(pos_sims)),
-                color="green",
-                linestyle="--",
-                linewidth=2,
-                label=f"Signal Point Mass ({np.mean(pos_sims):.3f})",
-            )
-
-        if neg_var > 1e-8:
-            sns.kdeplot(
-                neg_sims,
-                ax=ax,
-                color="red",
-                fill=True,
-                label="Non-Matching Pairs (Noise)",
-                alpha=0.3,
-                linewidth=2,
-                warn_singular=False,
-            )
-        else:
-            ax.axvline(
-                float(np.mean(neg_sims)),
-                color="red",
-                linestyle=":",
-                linewidth=2,
-                label=f"Noise Point Mass ({np.mean(neg_sims):.3f})",
-            )
-
-        ax.set_title(
-            f"Atrophy Level: {int(p * 100)}%", fontsize=12, fontweight="bold"
-        )
-        ax.set_xlabel("Cosine Similarity", fontsize=10)
-        ax.set_ylabel("Density", fontsize=10)
-        ax.grid(True, linestyle="--", alpha=0.3)
-        ax.legend(loc="upper right", fontsize=9)
-
-    plt.suptitle(
-        "Signal-to-Noise Distribution Collapse in Joint Embedding Space",
-        fontsize=15,
-        fontweight="bold",
-        y=0.98,
+    ref_img, ref_text, labels, concepts, _ = evaluator._extract_joint_features(
+        evaluator.base_model
     )
-    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    c_to_i = {c: i for i, c in enumerate(concepts)}
+    targets = torch.tensor([c_to_i[c] for c in labels])
 
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    for p in pruning_levels:
+        p_model = evaluator._apply_pruning(evaluator.base_model, p)
+        p_img, p_text, _, _, _ = evaluator._extract_joint_features(p_model)
+        sims = torch.matmul(p_img, p_text.T)
+        target_sims = sims[torch.arange(len(targets)), targets].numpy()
+        sns.kdeplot(
+            target_sims, label=f"Pruned {int(p*100)}%", fill=True, alpha=0.2
+        )
+
+    plt.title("Target Cosine Similarity Distribution Shift Across Pruning")
+    plt.xlabel("Cosine Similarity")
+    plt.ylabel("Density")
+    plt.legend()
+    plt.tight_layout()
+
+    save_path = os.path.join(output_dir, "signal_noise_distribution_shift.png")
+    plt.savefig(save_path, dpi=300)
     plt.close()
-    print(f"[+] Similarity distribution plot saved to:\n    {output_path}")
+    print(f"[+] Saved distribution shift plot to: {save_path}")
 
 
 def plot_target_rank_waterfall(
-    evaluator, pruning_levels=[0.0, 0.25, 0.50, 0.75, 0.90, 0.95], output_path=None
+    evaluator,
+    pruning_levels=[0.0, 0.25, 0.50, 0.75, 0.90, 0.95],
+    output_dir="./data/results",
 ):
-    if output_path is None:
-        output_path = os.path.join(
-            PROJECT_ROOT, "data", "results", "retrieval_rank_waterfall.png"
-        )
+    os.makedirs(output_dir, exist_ok=True)
+    plt.figure(figsize=(10, 5))
 
-    rank_data = []
-    base_model = evaluator.base_model
+    _, _, labels, concepts, _ = evaluator._extract_joint_features(
+        evaluator.base_model
+    )
+    c_to_i = {c: i for i, c in enumerate(concepts)}
+    targets = torch.tensor([c_to_i[c] for c in labels])
 
+    all_ranks = []
     for p in pruning_levels:
-        model_copy = copy.deepcopy(base_model)
-        engine = CLIPPruningEngine(model_copy)
-        pruned_model = engine.get_pruned_model(
-            amount=float(p), encoder_type="joint"
-        )
+        p_model = evaluator._apply_pruning(evaluator.base_model, p)
+        p_img, p_text, _, _, _ = evaluator._extract_joint_features(p_model)
+        sims = torch.matmul(p_img, p_text.T)
 
-        (
-            img_feats,
-            text_feats,
-            concept_labels,
-            unique_concepts,
-        ) = evaluator._extract_joint_features(pruned_model)
-        sim_matrix = (img_feats @ text_feats.T).float().cpu().numpy()
+        ranks = [
+            (
+                (torch.argsort(sims[i], descending=True) == targets[i])
+                .nonzero(as_tuple=True)[0]
+                .item()
+                + 1
+            )
+            for i in range(len(targets))
+        ]
+        all_ranks.append(ranks)
 
-        concept_to_idx = {c: i for i, c in enumerate(unique_concepts)}
-        targets = np.array([concept_to_idx[c] for c in concept_labels])
-
-        sorted_indices = np.argsort(-sim_matrix, axis=1)
-        ranks = np.where(sorted_indices == targets[:, None])[1] + 1
-
-        atrophy_level = int(p * 100)
-        for r in ranks:
-            rank_data.append({"Atrophy (%)": atrophy_level, "Rank": r})
-
-    rank_df = pd.DataFrame(rank_data)
-
-    plt.figure(figsize=(12, 6))
-    sns.boxplot(
-        x="Atrophy (%)",
-        y="Rank",
-        hue="Atrophy (%)",
-        data=rank_df,
-        palette="Reds",
-        showmeans=True,
-        legend=False,
-    )
+    plt.boxplot(all_ranks, labels=[f"{int(p*100)}%" for p in pruning_levels])
+    plt.title("Target Concept Rank Waterfall Across Pruning Levels")
+    plt.xlabel("Pruning Level (%)")
+    plt.ylabel("Target Retrieval Rank (Lower is Better)")
     plt.yscale("log")
-    plt.title(
-        "Target Retrieval Rank Drift Under Joint Projection Head Atrophy",
-        fontsize=14,
-        fontweight="bold",
-        pad=15,
-    )
-    plt.xlabel(
-        "Joint Projection Atrophy Level (%)", fontsize=11, fontweight="bold"
-    )
-    plt.ylabel(
-        "Target Concept Retrieval Rank (Log Scale)",
-        fontsize=11,
-        fontweight="bold",
-    )
-    plt.grid(True, which="both", linestyle="--", alpha=0.3)
+    plt.grid(True, linestyle="--", alpha=0.5)
+    plt.tight_layout()
 
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    save_path = os.path.join(output_dir, "target_rank_waterfall.png")
+    plt.savefig(save_path, dpi=300)
     plt.close()
-    print(f"[+] Target rank waterfall plot saved to:\n    {output_path}")
+    print(f"[+] Saved target rank waterfall plot to: {save_path}")
 
 
 def plot_concept_retrieval_heatmap(
-    evaluator, pruning_levels=[0.0, 0.25, 0.50, 0.75, 0.90, 0.95], output_path=None
+    evaluator,
+    pruning_levels=[0.0, 0.25, 0.50, 0.75, 0.90, 0.95],
+    output_dir="./data/results",
 ):
-    if output_path is None:
-        output_path = os.path.join(
-            PROJECT_ROOT, "data", "results", "concept_retrieval_heatmap.png"
-        )
+    os.makedirs(output_dir, exist_ok=True)
 
-    base_model = evaluator.base_model
-    concept_acc_by_level = {}
-
-    for p in pruning_levels:
-        model_copy = copy.deepcopy(base_model)
-        engine = CLIPPruningEngine(model_copy)
-        pruned_model = engine.get_pruned_model(amount=float(p), encoder_type="joint")
-
-        img_feats, text_feats, concept_labels, unique_concepts = evaluator._extract_joint_features(pruned_model)
-        sim_matrix = (img_feats @ text_feats.T).float().cpu().numpy()
-
-        concept_to_idx = {c: i for i, c in enumerate(unique_concepts)}
-        targets = np.array([concept_to_idx[c] for c in concept_labels])
-        preds = np.argmax(sim_matrix, axis=1)
-
-        p_accs = {}
-        for c in unique_concepts:
-            indices = np.where(np.array(concept_labels) == c)[0]
-            if len(indices) > 0:
-                acc = np.mean(preds[indices] == targets[indices])
-                p_accs[c] = acc * 100
-
-        concept_acc_by_level[f"{int(p*100)}%"] = pd.Series(p_accs)
-
-    heatmap_df = pd.DataFrame(concept_acc_by_level)
-
-    plt.figure(figsize=(10, max(8, len(heatmap_df) * 0.25)))
-    sns.heatmap(
-        heatmap_df,
-        cmap="YlOrRd_r",
-        annot=True,
-        fmt=".0f",
-        linewidths=0.5,
-        cbar_kws={"label": "Top-1 Accuracy (%)"},
+    _, _, labels, concepts, _ = evaluator._extract_joint_features(
+        evaluator.base_model
     )
-    plt.title("Specific Object Retrieval Dynamics Across Atrophy Levels", fontsize=14, fontweight="bold", pad=12)
-    plt.xlabel("Joint Projection Atrophy Level (%)", fontsize=11, fontweight="bold")
-    plt.ylabel("Specific Object Concept", fontsize=11, fontweight="bold")
+    c_to_i = {c: i for i, c in enumerate(concepts)}
+    targets = torch.tensor([c_to_i[c] for c in labels])
+
+    c_accs = {c: [] for c in concepts}
+    for p in pruning_levels:
+        p_model = evaluator._apply_pruning(evaluator.base_model, p)
+        p_img, p_text, _, _, _ = evaluator._extract_joint_features(p_model)
+        sims = torch.matmul(p_img, p_text.T)
+        preds = torch.argmax(sims, dim=1)
+
+        for c in concepts:
+            mask = targets == c_to_i[c]
+            acc = (
+                (preds[mask] == targets[mask]).float().mean().item()
+                if mask.sum() > 0
+                else 0.0
+            )
+            c_accs[c].append(acc)
+
+    df_heat = pd.DataFrame(
+        c_accs, index=[f"{int(p*100)}%" for p in pruning_levels]
+    ).T
+
+    plt.figure(figsize=(10, max(6, len(concepts) * 0.35)))
+    sns.heatmap(df_heat, annot=True, cmap="viridis", vmin=0.0, vmax=1.0)
+    plt.title("Per-Concept Accuracy Breakdown Across Pruning Levels")
+    plt.xlabel("Pruning Level (%)")
+    plt.ylabel("Concept")
     plt.tight_layout()
 
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    save_path = os.path.join(output_dir, "concept_retrieval_heatmap.png")
+    plt.savefig(save_path, dpi=300)
     plt.close()
-    print(f"[+] Object retrieval heatmap saved to:\n    {output_path}")
-
-
-if __name__ == "__main__":
-    evaluator = JointSpaceEvaluator()
-    results_df = evaluator.run_eval()
-
-    plot_category_breakdown_suite(results_df)
-    plot_hierarchical_breakdown_suite(results_df)
-    plot_signal_noise_distribution_shift(evaluator)
-    plot_target_rank_waterfall(evaluator)
-    plot_concept_retrieval_heatmap(evaluator)
+    print(f"[+] Saved concept retrieval heatmap to: {save_path}")

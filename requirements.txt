@@ -6,4 +6,6 @@ tqdm
 pandas
 pillow
 scikit-learn
+seaborn
+matplotlib
 git+https://github.com/openai/CLIP.git

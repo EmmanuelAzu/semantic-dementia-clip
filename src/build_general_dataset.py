@@ -40,7 +40,7 @@ TINY_IMAGENET_DRAWABLE_TAXONOMY = {
     "n02948072": {"specific": "Candle", "coordinate": "Home & Furniture", "superordinate": "Artifact", "domain": "Non-Living"}
 }
 
-def extract_dataset(zip_path, extract_dir, max_images_per_class=25):
+def extract_dataset(zip_path, extract_dir, max_images_per_class=500):
     os.makedirs(extract_dir, exist_ok=True)
     raw_images_dir = os.path.join(extract_dir, "raw")
     os.makedirs(raw_images_dir, exist_ok=True)
@@ -90,7 +90,7 @@ def main():
             raise FileNotFoundError(f"[!] Could not locate tiny-imagenet-200.zip at {zip_path}")
             
     print(f"[*] Extracting dataset from: {zip_path}")
-    records = extract_dataset(zip_path, data_dir, max_images_per_class=25)
+    records = extract_dataset(zip_path, data_dir, max_images_per_class=100)
     
     df = pd.DataFrame(records)
     csv_path = os.path.join(data_dir, "processed", "metadata_processed.csv")

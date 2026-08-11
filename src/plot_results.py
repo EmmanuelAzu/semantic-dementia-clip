@@ -1,59 +1,72 @@
 import os
+import sys
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-def plot_clinical_decay(csv_path, output_dir):
-    print(f"[*] Loading simulation data from {csv_path}...")
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.append(PROJECT_ROOT)
+
+def plot_representation_results(csv_path, output_dir=None):
+    if output_dir is None:
+        output_dir = os.path.join(PROJECT_ROOT, "data", "results")
+
     df = pd.read_csv(csv_path)
 
-    # Extract the base name of the CSV to name the plot dynamically
-    base_name = os.path.basename(csv_path).replace('.csv', '')
+    p_col = "Pruning_Level" if "Pruning_Level" in df.columns else "pruning_level"
+    x_vals = df[p_col] * 100
 
-    # Set up the academic plot style
-    sns.set_theme(style="whitegrid", palette="muted")
-    plt.figure(figsize=(12, 7))
+    sns.set_theme(style="whitegrid", palette="deep")
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
 
-    # Convert Pruning Level to percentages for the X-axis
-    x_vals = df['Pruning_Level'] * 100
-
-    # Plot each error trajectory
-    plt.plot(x_vals, df['Correct'], marker='o', label='Correct Retrieval', linewidth=2.5, color='forestgreen')
-    plt.plot(x_vals, df['Coordinate Error'], marker='s', label='Coordinate Error (e.g., Dog -> Cat)', linewidth=2, color='darkorange')
-    plt.plot(x_vals, df['Superordinate Error'], marker='^', label='Superordinate Error (e.g., Dog -> Animal)', linewidth=2, color='firebrick')
-    plt.plot(x_vals, df['Domain Error'], marker='x', label='Domain Error', linewidth=2, color='purple')
-    plt.plot(x_vals, df['Domain Collapse'], marker='d', label='Domain Collapse (e.g., Living -> Non-Living)', linewidth=2, color='black', linestyle='--')
-
-    # Formatting the Graph for your Thesis
-    # Dynamically update the title based on the simulation type
-    sim_type = "Aphasia (Text Hub)" if "text" in base_name else "Visual Agnosia (Vision Hub)"
-    plt.title(f'Simulated Semantic Dementia: {sim_type}\nHierarchical Conceptual Breakdown via Network Atrophy', fontsize=16, fontweight='bold', pad=15)
+    # Panel 1: Retrieval Accuracy & Alignment
+    ax1 = axes[0]
+    if "i2t_top1" in df.columns:
+        ax1.plot(x_vals, df["i2t_top1"], marker="o", label="Image-to-Text Top-1 Acc", linewidth=2.5, color="#1f77b4")
+    elif "top1_specific_acc" in df.columns:
+        ax1.plot(x_vals, df["top1_specific_acc"], marker="o", label="Specific Top-1 Acc", linewidth=2.5, color="#1f77b4")
     
-    plt.xlabel('Network Pruning Intensity (% of Weights Zeroed)', fontsize=14)
-    plt.ylabel('Number of Retrievals', fontsize=14)
-    plt.xticks(fontsize=12)
-    plt.yticks(fontsize=12)
-    
-    plt.legend(title="Response Type", title_fontsize='13', fontsize='11', loc='upper left')
-    plt.grid(True, linestyle='--', alpha=0.7)
+    if "mrr" in df.columns:
+        ax1.plot(x_vals, df["mrr"], marker="s", label="Mean Reciprocal Rank (MRR)", linewidth=2, color="#ff7f0e")
 
-    # Save the output dynamically
+    ax1.set_title("Retrieval & Accuracy Metrics", fontsize=13, fontweight="bold")
+    ax1.set_xlabel("Pruning Intensity (%)", fontsize=11)
+    ax1.set_ylabel("Score (0.0 - 1.0)", fontsize=11)
+    ax1.set_ylim(-0.05, 1.05)
+    ax1.legend(loc="best")
+    ax1.grid(True, linestyle="--", alpha=0.7)
+
+    # Panel 2: Vector Space Preservation & Drift
+    ax2 = axes[1]
+    if "cka_vision" in df.columns:
+        ax2.plot(x_vals, df["cka_vision"], marker="^", label="Vision CKA", linewidth=2, color="#2ca02c")
+    if "cka_text" in df.columns:
+        ax2.plot(x_vals, df["cka_text"], marker="v", label="Text CKA", linewidth=2, color="#d62728")
+    if "npr_vision" in df.columns:
+        ax2.plot(x_vals, df["npr_vision"], marker="d", label="Vision NPR (k=5)", linewidth=2, color="#9467bd")
+
+    ax2.set_title("Representation & Topology Drift", fontsize=13, fontweight="bold")
+    ax2.set_xlabel("Pruning Intensity (%)", fontsize=11)
+    ax2.set_ylabel("Similarity / Preservation Index", fontsize=11)
+    ax2.set_ylim(-0.05, 1.05)
+    ax2.legend(loc="best")
+    ax2.grid(True, linestyle="--", alpha=0.7)
+
+    plt.suptitle("Joint Space Model Degradation & Representation Analysis", fontsize=15, fontweight="bold", y=0.98)
+
     os.makedirs(output_dir, exist_ok=True)
-    out_file = os.path.join(output_dir, f'{base_name}_curve.png')
-    plt.savefig(out_file, dpi=300, bbox_inches='tight')
-    
-    print(f"[+] Plot successfully saved to: {out_file}")
-    
-    # Close the plot automatically so the pipeline can continue to the next iteration without waiting for user input
-    plt.close()
+    filename = os.path.basename(csv_path).replace(".csv", "_representation_metrics.png")
+    out_path = os.path.join(output_dir, filename)
+
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    plt.savefig(out_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[+] Representation results plot saved to: {out_path}")
 
 if __name__ == "__main__":
-    # Updated to match the new hub-focused CSV naming convention
-    csv_file = "./data/results/text_hub_simulation.csv"
-    out_folder = "./data/results/"
-    
+    csv_file = os.path.join(PROJECT_ROOT, "data", "results", "joint_space_metrics_full.csv")
     if os.path.exists(csv_file):
-        plot_clinical_decay(csv_file, out_folder)
-        plt.show()  # Only show it interactively if running this script directly
+        plot_representation_results(csv_file)
     else:
-        print(f"[!] Could not find {csv_file}. Please ensure you ran the testing harness first.")
+        print(f"[!] Target file not found: {csv_file}")
