@@ -1,10 +1,3 @@
-"""
-build_general_dataset.py
-------------------------
-Extracts hand-drawable, easily recognizable classes verified to exist in Tiny-ImageNet-200.
-Generates metadata_processed.csv with unified schema headers.
-"""
-
 import os
 import io
 import json
@@ -13,45 +6,34 @@ import pandas as pd
 from PIL import Image
 from tqdm import tqdm
 
-# Dynamically resolve project root directory
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 
-# 24 Curated WNIDs strictly present in Tiny-ImageNet-200
-# Organized into simple, distinct, hand-drawable concept pairs
 TINY_IMAGENET_DRAWABLE_TAXONOMY = {
-    # --- LIVING DOMAIN ---
-    # 1. Mammals (Warm Reds)
     "n02123045": {"specific": "Tabby Cat", "coordinate": "Mammal", "superordinate": "Animal", "domain": "Living"},
     "n02124075": {"specific": "Egyptian Cat", "coordinate": "Mammal", "superordinate": "Animal", "domain": "Living"},
     "n02106662": {"specific": "German Shepherd", "coordinate": "Mammal", "superordinate": "Animal", "domain": "Living"},
     "n02099601": {"specific": "Golden Retriever", "coordinate": "Mammal", "superordinate": "Animal", "domain": "Living"},
     
-    # 2. Non-Mammals (Cool Blues)
     "n01443537": {"specific": "Goldfish", "coordinate": "Non-Mammal", "superordinate": "Animal", "domain": "Living"},
     "n01641577": {"specific": "Bullfrog", "coordinate": "Non-Mammal", "superordinate": "Animal", "domain": "Living"},
     "n01770393": {"specific": "Scorpion", "coordinate": "Non-Mammal", "superordinate": "Animal", "domain": "Living"},
     "n01774750": {"specific": "Tarantula", "coordinate": "Non-Mammal", "superordinate": "Animal", "domain": "Living"},
 
-    # 3. Flora & Food (Greens)
     "n07749582": {"specific": "Lemon", "coordinate": "Flora & Food", "superordinate": "Plant", "domain": "Living"},
     "n07753592": {"specific": "Banana", "coordinate": "Flora & Food", "superordinate": "Plant", "domain": "Living"},
     "n07583066": {"specific": "Guacamole", "coordinate": "Flora & Food", "superordinate": "Plant", "domain": "Living"},
     "n07920052": {"specific": "Espresso", "coordinate": "Flora & Food", "superordinate": "Plant", "domain": "Living"},
 
-    # --- NON-LIVING DOMAIN ---
-    # 4. Land Vehicles (Oranges)
     "n04254680": {"specific": "Sports Car", "coordinate": "Land Vehicle", "superordinate": "Vehicle", "domain": "Non-Living"},
     "n03977966": {"specific": "Police Van", "coordinate": "Land Vehicle", "superordinate": "Vehicle", "domain": "Non-Living"},
     "n03791053": {"specific": "Motor Scooter", "coordinate": "Land Vehicle", "superordinate": "Vehicle", "domain": "Non-Living"},
     "n03393912": {"specific": "Freight Car", "coordinate": "Land Vehicle", "superordinate": "Vehicle", "domain": "Non-Living"},
 
-    # 5. Non-Land Vehicles (Sky-Blues)
     "n02691156": {"specific": "Airplane", "coordinate": "Non-Land Vehicle", "superordinate": "Vehicle", "domain": "Non-Living"},
     "n02950826": {"specific": "Catamaran", "coordinate": "Non-Land Vehicle", "superordinate": "Vehicle", "domain": "Non-Living"},
     "n03637318": {"specific": "Lifeboat", "coordinate": "Non-Land Vehicle", "superordinate": "Vehicle", "domain": "Non-Living"},
     "n03445924": {"specific": "Gondola", "coordinate": "Non-Land Vehicle", "superordinate": "Vehicle", "domain": "Non-Living"},
 
-    # 6. Home & Furniture (Purples)
     "n04099969": {"specific": "Rocking Chair", "coordinate": "Home & Furniture", "superordinate": "Artifact", "domain": "Non-Living"},
     "n03201208": {"specific": "Dining Table", "coordinate": "Home & Furniture", "superordinate": "Artifact", "domain": "Non-Living"},
     "n02808440": {"specific": "Bathtub", "coordinate": "Home & Furniture", "superordinate": "Artifact", "domain": "Non-Living"},

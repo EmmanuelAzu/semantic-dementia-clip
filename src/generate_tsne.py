@@ -1,225 +1,188 @@
-"""
-generate_tsne.py
-----------------
-Generates a 2x2 t-SNE grid visualization with Procrustes spatial alignment,
-hierarchical color palettes, and 1.5-sigma confidence boundary ellipses.
-"""
-
+import copy
 import os
 import sys
 import torch
-import clip
+import matplotlib.pyplot as plt
+from matplotlib.patches import Ellipse
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-from matplotlib.patches import Ellipse
 from scipy.spatial import procrustes
 from sklearn.manifold import TSNE
-from PIL import Image
 
-# Dynamically resolve project root directory
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.append(PROJECT_ROOT)
 
 from src.pruning_engine import CLIPPruningEngine
 
-# 1. HIERARCHICAL COLOR PALETTE MAPPING
-# Domain/Superordinate = Color Family; Coordinate Category = Specific Shade
-CATEGORY_COLORS = {
-    "Mammal": "#d73027",             # Deep Crimson (Living / Mammal)
-    "Non-Mammal": "#4575b4",         # Deep Navy Blue (Living / Aquatic & Reptile)
-    "Flora & Food": "#2ca02c",       # Forest Green (Living / Produce & Plants)
-    "Land Vehicle": "#ff7f0e",       # Bright Orange (Non-Living / Land Vehicles)
-    "Non-Land Vehicle": "#17becf",   # Cyan / Sky-Blue (Non-Living / Aircraft & Ships)
-    "Home & Furniture": "#762a83"    # Purple (Non-Living / Household Objects)
+HIERARCHICAL_COLOR_MAP = {
+    "Mammal": {
+        "Tabby Cat": "#990000",
+        "Egyptian Cat": "#d73027",
+        "German Shepherd": "#f46d43",
+        "Golden Retriever": "#fdae61",
+    },
+    "Non-Mammal": {
+        "Goldfish": "#053061",
+        "Bullfrog": "#2166ac",
+        "Scorpion": "#4393c3",
+        "Tarantula": "#92c5de",
+    },
+    "Flora & Food": {
+        "Lemon": "#00441b",
+        "Banana": "#238b45",
+        "Guacamole": "#66c2a4",
+        "Espresso": "#a1d99b",
+    },
+    "Land Vehicle": {
+        "Sports Car": "#8c510a",
+        "Police Van": "#bf812d",
+        "Motor Scooter": "#dfc27d",
+        "Freight Car": "#f6e8c3",
+    },
+    "Non-Land Vehicle": {
+        "Airplane": "#276419",
+        "Catamaran": "#4d9221",
+        "Lifeboat": "#7fbc41",
+        "Gondola": "#b8e186",
+    },
+    "Home & Furniture": {
+        "Rocking Chair": "#40004b",
+        "Dining Table": "#762a83",
+        "Bathtub": "#9970ab",
+        "Candle": "#c2a5cf",
+    },
 }
 
-def draw_confidence_ellipse(x, y, ax, color, n_std=1.5, alpha=0.18):
-    """Draws a 2D Gaussian confidence boundary ellipse around a category cluster."""
-    if len(x) < 4:
+
+def draw_confidence_ellipse(x, y, ax, color, n_std=1.5, alpha=0.15):
+    if len(x) < 3:
         return
-        
     cov = np.cov(x, y)
     vals, vectors = np.linalg.eigh(cov)
-    
     order = vals.argsort()[::-1]
     vals, vectors = vals[order], vectors[:, order]
-    
     theta = np.degrees(np.arctan2(*vectors[:, 0][::-1]))
     width, height = 2 * n_std * np.sqrt(np.maximum(0, vals))
-    
+
     ellipse = Ellipse(
-        xy=(np.mean(x), np.mean(y)), 
-        width=width, 
+        xy=(np.mean(x), np.mean(y)),
+        width=width,
         height=height,
-        angle=theta, 
-        facecolor=color, 
-        edgecolor=color, 
-        alpha=alpha, 
-        linewidth=1.5,
-        zorder=1
+        angle=theta,
+        facecolor=color,
+        edgecolor=color,
+        alpha=alpha,
+        linewidth=1.2,
+        zorder=1,
     )
     ax.add_patch(ellipse)
 
-def extract_embeddings(model, metadata, preprocess, device, batch_size=32):
-    """Extracts normalized visual embeddings for dataset images."""
-    model.eval()
-    batch_images = []
-    valid_indices = []
-    
-    for idx, row in metadata.iterrows():
-        img_path = row['filepath']
-        if not os.path.isabs(img_path):
-            img_path = os.path.join(PROJECT_ROOT, img_path)
-            
-        if os.path.exists(img_path):
-            img = Image.open(img_path).convert("RGB")
-            batch_images.append(preprocess(img))
-            valid_indices.append(idx)
-            
-    if not batch_images:
-        raise ValueError("No valid images found to extract embeddings. Check filepaths in metadata.")
-        
-    filtered_meta = metadata.iloc[valid_indices].copy().reset_index(drop=True)
-    
-    embedding_chunks = []
-    with torch.no_grad():
-        for i in range(0, len(batch_images), batch_size):
-            chunk = torch.stack(batch_images[i:i + batch_size]).to(device)
-            feats = model.encode_image(chunk)
-            feats = feats / feats.norm(dim=-1, keepdim=True)
-            embedding_chunks.append(feats.cpu().numpy())
-            
-    all_embeddings = np.concatenate(embedding_chunks, axis=0)
-    return all_embeddings, filtered_meta
 
-def generate_tsne_grid(
-    metadata_path=None, 
-    output_plot_path=None, 
-    encoder_type="vision", 
-    pruning_levels=[0.0, 0.3, 0.6, 0.9]
+def generate_joint_hierarchical_tsne(
+    evaluator,
+    pruning_levels=[0.0, 0.25, 0.50, 0.75, 0.90, 0.95],
+    output_path=None,
+    max_tsne_samples=2000,
 ):
-    """
-    Generates a 2x2 t-SNE grid plot featuring Procrustes spatial alignment,
-    hierarchical color family mapping, and 1.5-sigma confidence boundary overlays.
-    """
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    
-    if metadata_path is None:
-        metadata_path = os.path.join(PROJECT_ROOT, "data", "processed", "metadata_processed.csv")
-    if output_plot_path is None:
-        output_plot_path = os.path.join(PROJECT_ROOT, "data", "results", "enhanced_tsne_grid.png")
-        
-    metadata = pd.read_csv(metadata_path)
-    coord_col = 'coordinate' if 'coordinate' in metadata.columns else 'basic'
-    
-    # Filter metadata to keep primary coordinate classes in CATEGORY_COLORS
-    filtered_meta = metadata[metadata[coord_col].isin(CATEGORY_COLORS.keys())].copy().reset_index(drop=True)
-    if filtered_meta.empty:
-        filtered_meta = metadata.copy()
-    
-    # Load base model & pruning engine
-    base_model, preprocess = clip.load("ViT-B/32", device=device)
-    pruning_engine = CLIPPruningEngine(base_model)
-    
-    print(f"[*] Extracting visual embeddings across {len(pruning_levels)} atrophy levels...")
+    if output_path is None:
+        output_path = os.path.join(
+            PROJECT_ROOT, "data", "results", "joint_hierarchical_tsne.png"
+        )
+
+    meta = evaluator.metadata.copy().reset_index(drop=True)
+    spec_col = (
+        "specific"
+        if "specific" in meta.columns
+        else ("concept" if "concept" in meta.columns else "name")
+    )
+
+    if len(meta) > max_tsne_samples:
+        sample_indices = meta.sample(
+            n=max_tsne_samples, random_state=42
+        ).index.values
+        meta_tsne = meta.loc[sample_indices].reset_index(drop=True)
+    else:
+        sample_indices = None
+        meta_tsne = meta
+
+    base_model = evaluator.base_model
     embeddings_by_level = {}
-    
+
     for p in pruning_levels:
-        if encoder_type == "joint":
-            pruned_model = pruning_engine.get_pruned_model(amount=p, encoder_type="text")
-            pruned_model = pruning_engine.get_pruned_model(amount=p, encoder_type="vision", model=pruned_model)
-        else:
-            pruned_model = pruning_engine.get_pruned_model(amount=p, encoder_type=encoder_type)
-            
-        pruned_model.eval()
-        feats, meta = extract_embeddings(pruned_model, filtered_meta, preprocess, device)
-        embeddings_by_level[p] = feats
+        model_copy = copy.deepcopy(base_model)
+        engine = CLIPPruningEngine(model_copy)
+        pruned_model = engine.get_pruned_model(
+            amount=float(p), encoder_type="joint"
+        )
 
-    # Compute t-SNE & Apply Procrustes Spatial Alignment relative to 0% baseline
-    print("[*] Computing t-SNE projections and applying Procrustes spatial alignment...")
-    tsne_coords = {}
-    
-    tsne_base = TSNE(n_components=2, perplexity=30, random_state=42, init='pca', learning_rate='auto')
+        img_feats, text_feats, _, _ = evaluator._extract_joint_features(
+            pruned_model
+        )
+
+        if sample_indices is not None:
+            idx_tensor = torch.as_tensor(sample_indices, device=img_feats.device)
+            img_feats = img_feats[idx_tensor]
+
+        embeddings_by_level[p] = np.vstack(
+            [img_feats.detach().cpu().numpy(), text_feats.detach().cpu().numpy()]
+        )
+
+    perp = min(30, max(5, (len(meta_tsne) - 1) // 3))
+    tsne_base = TSNE(n_components=2, perplexity=perp, random_state=42)
     coords_0 = tsne_base.fit_transform(embeddings_by_level[0.0])
-    
-    # Procrustes transform aligns subsequent levels to 0% baseline coordinate orientation
-    for p in pruning_levels[1:]:
-        tsne_p = TSNE(n_components=2, perplexity=30, random_state=42, init='pca', learning_rate='auto')
-        raw_coords_p = tsne_p.fit_transform(embeddings_by_level[p])
-        
-        mtx_base, mtx_aligned, _ = procrustes(coords_0, raw_coords_p)
-        tsne_coords[p] = mtx_aligned
-        
-    tsne_coords[0.0] = mtx_base
+    norm_0 = np.linalg.norm(coords_0)
+    coords_0 = (coords_0 - np.mean(coords_0, axis=0)) / (norm_0 if norm_0 > 0 else 1.0)
 
-    # Render 2x2 Subplot Grid
-    fig, axes = plt.subplots(2, 2, figsize=(16, 14))
+    tsne_coords = {0.0: coords_0}
+    for p in pruning_levels[1:]:
+        tsne_p = TSNE(n_components=2, perplexity=perp, random_state=42)
+        raw_p = tsne_p.fit_transform(embeddings_by_level[p])
+        _, aligned_p, _ = procrustes(coords_0, raw_p)
+        tsne_coords[p] = aligned_p
+
+    fig, axes = plt.subplots(2, 3, figsize=(18, 11))
     axes = axes.flatten()
-    
+
     for idx, p in enumerate(pruning_levels):
         ax = axes[idx]
-        coords = tsne_coords[p]
-        
-        for cat_name, color in CATEGORY_COLORS.items():
-            indices = meta[meta[coord_col] == cat_name].index.values
-            if len(indices) == 0:
-                continue
-                
-            x_pts = coords[indices, 0]
-            y_pts = coords[indices, 1]
-            
-            # Layer A: 1.5-sigma Confidence Boundary Ellipse
-            draw_confidence_ellipse(x_pts, y_pts, ax, color=color, n_std=1.5, alpha=0.18)
-            
-            # Layer B: Scatter Points
-            ax.scatter(
-                x_pts, y_pts, 
-                c=color, 
-                label=cat_name, 
-                s=35, 
-                alpha=0.85, 
-                edgecolors='white', 
-                linewidth=0.5,
-                zorder=2
-            )
-            
-        ax.set_title(f"Atrophy Level: {int(p * 100)}%", fontsize=14, fontweight='bold', pad=10)
-        ax.set_xlabel("Aligned t-SNE Dim 1", fontsize=11)
-        ax.set_ylabel("Aligned t-SNE Dim 2", fontsize=11)
-        ax.grid(True, linestyle="--", alpha=0.4)
+        coords = tsne_coords[p][: len(meta_tsne)]
 
-    # Global Legend
-    legend_patches = [
-        mpatches.Patch(color=color, label=cat_name) 
-        for cat_name, color in CATEGORY_COLORS.items()
-    ]
-    fig.legend(
-        handles=legend_patches, 
-        title="Coordinate Category", 
-        loc="center right", 
-        bbox_to_anchor=(1.14, 0.5),
-        fontsize=11, 
-        title_fontsize=12,
-        frameon=True,
-        facecolor="white"
-    )
+        for domain, sub_map in HIERARCHICAL_COLOR_MAP.items():
+            for concept_cat, color in sub_map.items():
+                indices = meta_tsne[
+                    meta_tsne[spec_col] == concept_cat
+                ].index.values
+                if len(indices) == 0:
+                    continue
+
+                x_pts, y_pts = coords[indices, 0], coords[indices, 1]
+                draw_confidence_ellipse(
+                    x_pts, y_pts, ax, color=color, n_std=1.5
+                )
+                ax.scatter(
+                    x_pts,
+                    y_pts,
+                    c=color,
+                    label=f"{domain}: {concept_cat}",
+                    s=20,
+                    alpha=0.7,
+                )
+
+        ax.set_title(
+            f"Atrophy Level: {int(p * 100)}%", fontsize=12, fontweight="bold"
+        )
+        ax.grid(True, linestyle="--", alpha=0.3)
 
     plt.suptitle(
-        f"Semantic Cluster Dissolution Under {encoder_type.upper()} Hub Atrophy\n(Procrustes-Aligned t-SNE with 1.5σ Confidence Boundaries)", 
-        fontsize=16, 
-        fontweight='bold', 
-        y=0.98
+        "Hierarchical Joint Space Clustering Dissolution (1.5σ Boundaries)",
+        fontsize=15,
+        fontweight="bold",
+        y=0.98,
     )
-    plt.tight_layout(rect=[0, 0, 0.98, 0.95])
-    
-    os.makedirs(os.path.dirname(output_plot_path), exist_ok=True)
-    plt.savefig(output_plot_path, dpi=300, bbox_inches='tight')
-    plt.close()
-    
-    print(f"[+] Enhanced t-SNE grid successfully saved to:\n    {output_plot_path}")
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
 
-if __name__ == "__main__":
-    generate_tsne_grid(encoder_type="joint")
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close()
+    print(f"[+] Hierarchical Joint t-SNE plot saved to:\n    {output_path}")
