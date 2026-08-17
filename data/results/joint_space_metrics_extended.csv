@@ -1,4 +1,4 @@
-pruning_level,i2t_top1,i2t_top5,t2i_top1,mean_cosine,mrr,cka_vision,cka_text,npr_vision,top1_specific_acc,top1_basic_acc,top1_domain_acc,pct_superordinate_errors,pct_domain_collapse_errors,acc_Flora & Food,acc_Home & Furniture,acc_Land Vehicle,acc_Mammal,acc_Non-Land Vehicle,acc_Non-Mammal
+pruning_level,i2t_top1,i2t_top5,t2i_top1,mean_cosine,mrr,cka_vision,cka_text,npr_vision,top1_specific_acc,top1_coordinate_acc,top1_domain_acc,pct_superordinate_errors,pct_domain_collapse_errors,acc_Flora & Food,acc_Home & Furniture,acc_Land Vehicle,acc_Mammal,acc_Non-Land Vehicle,acc_Non-Mammal
 0.0,0.77,0.91,0.85,0.2551279664039612,0.8366514185504896,1.0,1.0,1.0,1.0,1.0,1.0,0.0,0.0,0.92,0.86,0.96,0.73,0.02,0.85
 0.1,0.758,0.92,0.85,0.06808694452047348,0.8322142732654343,0.9958865662281766,0.9981697407652197,0.9268000000000001,1.0,1.0,1.0,0.0,0.0,0.93,0.81,0.92,0.73,0.04,0.84
 0.2,0.74,0.894,0.85,0.049450140446424484,0.8171599505413747,0.9932698257073321,0.994772832546645,0.898,1.0,1.0,1.0,0.0,0.0,0.88,0.7,0.92,0.75,0.1,0.86

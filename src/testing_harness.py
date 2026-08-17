@@ -60,8 +60,8 @@ class TestingHarness:
         }
 
     def classify_error(self, target_row: dict, predicted_row: pd.Series) -> str:
-        target_coord = target_row.get('coordinate', target_row.get('basic'))
-        pred_coord = predicted_row.get('coordinate', predicted_row.get('basic'))
+        target_coord = target_row.get('coordinate', target_row.get('coordinate'))
+        pred_coord = predicted_row.get('coordinate', predicted_row.get('coordinate'))
 
         if target_row['specific'] == predicted_row['specific']:
             return "Correct"

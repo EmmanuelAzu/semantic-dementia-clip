@@ -30,7 +30,7 @@ CATEGORY_COLORS = {
 def extract_joint_embeddings(model, metadata, preprocess, device):
     model.eval()
     
-    coord_col = 'coordinate' if 'coordinate' in metadata.columns else 'basic'
+    coord_col = 'coordinate' if 'coordinate' in metadata.columns else 'coordinate'
     spec_col = 'specific' if 'specific' in metadata.columns else 'concept'
     
     img_tensors = []
@@ -143,7 +143,7 @@ def generate_shared_progression_grid(
         ax = axes[idx]
         img_coords, text_coords = coords_by_level[p]
         _, _, concepts_df, meta = feats_by_level[p]
-        coord_col = 'coordinate' if 'coordinate' in meta.columns else 'basic'
+        coord_col = 'coordinate' if 'coordinate' in meta.columns else 'coordinate'
         
         for cat, color in CATEGORY_COLORS.items():
             mask = (meta[coord_col] == cat).values

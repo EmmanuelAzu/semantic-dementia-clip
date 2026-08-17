@@ -32,12 +32,12 @@ def run_verification():
     df = pd.read_csv(raw_metadata_path)
 
     # 2. Validate your 4-tier hierarchical taxonomy columns
-    required_cols = ["filename", "domain", "superordinate", "basic", "specific"]
+    required_cols = ["filename", "domain", "superordinate", "coordinate", "specific"]
     missing_cols = [col for col in required_cols if col not in df.columns]
     
     if missing_cols:
         print(f"\n[Error] Your metadata_raw.csv is missing required taxonomic columns: {missing_cols}")
-        print("To match your 4-tier clinical taxonomy, it must include: filename, domain, superordinate, basic, specific")
+        print("To match your 4-tier clinical taxonomy, it must include: filename, domain, superordinate, coordinate, specific")
         sys.exit(1)
     
     print("[+] 4-Tier taxonomy column check: PASSED")
@@ -58,7 +58,7 @@ def run_verification():
         color = (34, 139, 34) if row['domain'].lower() == 'living' else (112, 128, 144)
         
         if not os.path.exists(img_path):
-            # Create a basic 224x224 RGB image (standard size for CLIP preprocessing)
+            # Create a coordinate 224x224 RGB image (standard size for CLIP preprocessing)
             img = Image.new("RGB", (224, 224), color=color)
             img.save(img_path)
             generated_count += 1

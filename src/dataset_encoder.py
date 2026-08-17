@@ -23,7 +23,7 @@ class DatasetEncoder:
         
     def load_and_verify_metadata(self):
         df = pd.read_csv(self.metadata_path)
-        required_columns = ["filename", "domain", "superordinate", "basic", "specific"]
+        required_columns = ["filename", "domain", "superordinate", "coordinate", "specific"]
         for col in required_columns:
             if col not in df.columns:
                 raise ValueError(f"[!] Missing required column '{col}' in metadata CSV.")

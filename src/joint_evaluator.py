@@ -17,7 +17,7 @@ class EvaluationImageDataset(Dataset):
         self.preprocess = preprocess
 
         if concept_col not in metadata.columns:
-            for alt in ["specific", "basic", "concept", "label", "class"]:
+            for alt in ["specific", "coordinate", "concept", "label", "class"]:
                 if alt in metadata.columns:
                     concept_col = alt
                     break
@@ -262,12 +262,12 @@ class JointSpaceEvaluator:
             # Hierarchical Accuracy Calculations
             spec_acc = correct_mask.float().mean().item()
 
-            basic_acc, super_acc = spec_acc, spec_acc
+            coordinate_acc, super_acc = spec_acc, spec_acc
             if (
-                "basic" in eval_meta.columns
+                "coordinate" in eval_meta.columns
                 and "superordinate" in eval_meta.columns
             ):
-                basic_correct, super_correct = 0, 0
+                coordinate_correct, super_correct = 0, 0
                 for i, pred_idx in enumerate(top1_preds):
                     pred_c = unique_concepts[pred_idx.item()]
                     pred_match = self.metadata[
@@ -276,13 +276,13 @@ class JointSpaceEvaluator:
                     if not pred_match.empty:
                         p_row = pred_match.iloc[0]
                         t_row = eval_meta.iloc[i]
-                        if p_row.get("basic") == t_row.get("basic"):
-                            basic_correct += 1
+                        if p_row.get("coordinate") == t_row.get("coordinate"):
+                            coordinate_correct += 1
                         if p_row.get("superordinate") == t_row.get(
                             "superordinate"
                         ):
                             super_correct += 1
-                basic_acc = basic_correct / len(eval_meta)
+                coordinate_acc = coordinate_correct / len(eval_meta)
                 super_acc = super_correct / len(eval_meta)
 
             # MRR
@@ -336,7 +336,7 @@ class JointSpaceEvaluator:
                     "pruning_level": p_level,
                     "i2t_top1": spec_acc,
                     "top1_specific_acc": spec_acc,
-                    "top1_basic_acc": basic_acc,
+                    "top1_coordinate_acc": coordinate_acc,
                     "top1_super_acc": super_acc,
                     "mrr": mrr,
                     "cka_vision": self._compute_cka(ref_img, p_img),

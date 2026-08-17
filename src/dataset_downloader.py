@@ -7,28 +7,28 @@ from tqdm import tqdm
 
 TAXONOMY_MAP = {
     # --- LIVING DOMAIN (10 Classes) ---
-    "n02114304": {"domain": "living", "superordinate": "animal", "basic": "canine", "specific": "chihuahua"},
-    "n02124075": {"domain": "living", "superordinate": "animal", "basic": "feline", "specific": "egyptian_cat"},
-    "n02504458": {"domain": "living", "superordinate": "animal", "basic": "large_mammal", "specific": "african_elephant"},
-    "n01443537": {"domain": "living", "superordinate": "animal", "basic": "fish", "specific": "goldfish"},
-    "n01843383": {"domain": "living", "superordinate": "animal", "basic": "bird", "specific": "toucan"},
-    "n07742439": {"domain": "living", "superordinate": "plant_food", "basic": "fruit", "specific": "lemon"},
-    "n07753275": {"domain": "living", "superordinate": "plant_food", "basic": "fruit", "specific": "pineapple"},
-    "n07720875": {"domain": "living", "superordinate": "plant_food", "basic": "vegetable", "specific": "bell_pepper"},
-    "n07739344": {"domain": "living", "superordinate": "plant_food", "basic": "vegetable", "specific": "granny_smith_apple"},
-    "n07697313": {"domain": "living", "superordinate": "plant_food", "basic": "fungi", "specific": "mushroom"},
+    "n02114304": {"domain": "living", "superordinate": "animal", "coordinate": "canine", "specific": "chihuahua"},
+    "n02124075": {"domain": "living", "superordinate": "animal", "coordinate": "feline", "specific": "egyptian_cat"},
+    "n02504458": {"domain": "living", "superordinate": "animal", "coordinate": "large_mammal", "specific": "african_elephant"},
+    "n01443537": {"domain": "living", "superordinate": "animal", "coordinate": "fish", "specific": "goldfish"},
+    "n01843383": {"domain": "living", "superordinate": "animal", "coordinate": "bird", "specific": "toucan"},
+    "n07742439": {"domain": "living", "superordinate": "plant_food", "coordinate": "fruit", "specific": "lemon"},
+    "n07753275": {"domain": "living", "superordinate": "plant_food", "coordinate": "fruit", "specific": "pineapple"},
+    "n07720875": {"domain": "living", "superordinate": "plant_food", "coordinate": "vegetable", "specific": "bell_pepper"},
+    "n07739344": {"domain": "living", "superordinate": "plant_food", "coordinate": "vegetable", "specific": "granny_smith_apple"},
+    "n07697313": {"domain": "living", "superordinate": "plant_food", "coordinate": "fungi", "specific": "mushroom"},
 
     # --- NON-LIVING DOMAIN (10 Classes) ---
-    "n03100240": {"domain": "non-living", "superordinate": "vehicle", "basic": "land_transport", "specific": "convertible_car"},
-    "n03791053": {"domain": "non-living", "superordinate": "vehicle", "basic": "land_transport", "specific": "motorcycle"},
-    "n02690373": {"domain": "non-living", "superordinate": "vehicle", "basic": "air_transport", "specific": "airliner"},
-    "n04090263": {"domain": "non-living", "superordinate": "vehicle", "basic": "water_transport", "specific": "rifle_boat"},
-    "n04467665": {"domain": "non-living", "superordinate": "vehicle", "basic": "rail_transport", "specific": "trolleybus"},
-    "n03485407": {"domain": "non-living", "superordinate": "artifact", "basic": "tool", "specific": "hammer"},
-    "n03001627": {"domain": "non-living", "superordinate": "artifact", "basic": "household_item", "specific": "chair"},
-    "n03047056": {"domain": "non-living", "superordinate": "artifact", "basic": "household_item", "specific": "wall_clock"},
-    "n03980874": {"domain": "non-living", "superordinate": "artifact", "basic": "kitchen_utensil", "specific": "corkscrew"},
-    "n04356056": {"domain": "non-living", "superordinate": "artifact", "basic": "container", "specific": "water_bottle"}
+    "n03100240": {"domain": "non-living", "superordinate": "vehicle", "coordinate": "land_transport", "specific": "convertible_car"},
+    "n03791053": {"domain": "non-living", "superordinate": "vehicle", "coordinate": "land_transport", "specific": "motorcycle"},
+    "n02690373": {"domain": "non-living", "superordinate": "vehicle", "coordinate": "air_transport", "specific": "airliner"},
+    "n04090263": {"domain": "non-living", "superordinate": "vehicle", "coordinate": "water_transport", "specific": "rifle_boat"},
+    "n04467665": {"domain": "non-living", "superordinate": "vehicle", "coordinate": "rail_transport", "specific": "trolleybus"},
+    "n03485407": {"domain": "non-living", "superordinate": "artifact", "coordinate": "tool", "specific": "hammer"},
+    "n03001627": {"domain": "non-living", "superordinate": "artifact", "coordinate": "household_item", "specific": "chair"},
+    "n03047056": {"domain": "non-living", "superordinate": "artifact", "coordinate": "household_item", "specific": "wall_clock"},
+    "n03980874": {"domain": "non-living", "superordinate": "artifact", "coordinate": "kitchen_utensil", "specific": "corkscrew"},
+    "n04356056": {"domain": "non-living", "superordinate": "artifact", "coordinate": "container", "specific": "water_bottle"}
 }
 
 class TinyImageNetCurationPipeline:
@@ -91,7 +91,7 @@ class TinyImageNetCurationPipeline:
                     "filepath": os.path.join("data", "images", new_filename),
                     "domain": meta_info["domain"],
                     "superordinate": meta_info["superordinate"],
-                    "basic": meta_info["basic"],
+                    "coordinate": meta_info["coordinate"],
                     "specific": meta_info["specific"]
                 })
 

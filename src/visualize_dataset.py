@@ -38,7 +38,7 @@ def visualize_random_samples(metadata_path, img_dir, num_samples=9):
             title_text = (
                 f"Domain: {row['domain'].upper()}\n"
                 f"Super: {row['superordinate'].capitalize()}\n"
-                f"Basic: {row['basic'].capitalize()}\n"
+                f"coordinate: {row['coordinate'].capitalize()}\n"
                 f"Specific: {row['specific'].capitalize()}"
             )
             ax.set_title(title_text, fontsize=10, fontweight='bold', pad=8)

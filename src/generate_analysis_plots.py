@@ -98,7 +98,7 @@ def plot_hierarchical_breakdown_suite(df, output_dir="./data/results"):
     # Measured
     for col, color in [
         ("top1_specific_acc", "#d62728"),
-        ("top1_basic_acc", "#ff7f0e"),
+        ("top1_coordinate_acc", "#ff7f0e"),
         ("top1_super_acc", "#2ca02c"),
     ]:
         if col in df.columns:
@@ -181,49 +181,49 @@ def plot_signal_noise_distribution_shift(
     print(f"[+] Saved distribution shift plot to: {save_path}")
 
 
-def plot_target_rank_waterfall(
-    evaluator,
-    pruning_levels=[0.0, 0.25, 0.50, 0.75, 0.90, 0.95],
-    output_dir="./data/results",
-):
-    os.makedirs(output_dir, exist_ok=True)
-    plt.figure(figsize=(10, 5))
+# def plot_target_rank_waterfall(
+#     evaluator,
+#     pruning_levels=[0.0, 0.25, 0.50, 0.75, 0.90, 0.95],
+#     output_dir="./data/results",
+# ):
+#     os.makedirs(output_dir, exist_ok=True)
+#     plt.figure(figsize=(10, 5))
 
-    _, _, labels, concepts, _ = evaluator._extract_joint_features(
-        evaluator.base_model
-    )
-    c_to_i = {c: i for i, c in enumerate(concepts)}
-    targets = torch.tensor([c_to_i[c] for c in labels])
+#     _, _, labels, concepts, _ = evaluator._extract_joint_features(
+#         evaluator.base_model
+#     )
+#     c_to_i = {c: i for i, c in enumerate(concepts)}
+#     targets = torch.tensor([c_to_i[c] for c in labels])
 
-    all_ranks = []
-    for p in pruning_levels:
-        p_model = evaluator._apply_pruning(evaluator.base_model, p)
-        p_img, p_text, _, _, _ = evaluator._extract_joint_features(p_model)
-        sims = torch.matmul(p_img, p_text.T)
+#     all_ranks = []
+#     for p in pruning_levels:
+#         p_model = evaluator._apply_pruning(evaluator.base_model, p)
+#         p_img, p_text, _, _, _ = evaluator._extract_joint_features(p_model)
+#         sims = torch.matmul(p_img, p_text.T)
 
-        ranks = [
-            (
-                (torch.argsort(sims[i], descending=True) == targets[i])
-                .nonzero(as_tuple=True)[0]
-                .item()
-                + 1
-            )
-            for i in range(len(targets))
-        ]
-        all_ranks.append(ranks)
+#         ranks = [
+#             (
+#                 (torch.argsort(sims[i], descending=True) == targets[i])
+#                 .nonzero(as_tuple=True)[0]
+#                 .item()
+#                 + 1
+#             )
+#             for i in range(len(targets))
+#         ]
+#         all_ranks.append(ranks)
 
-    plt.boxplot(all_ranks, labels=[f"{int(p*100)}%" for p in pruning_levels])
-    plt.title("Target Concept Rank Waterfall Across Pruning Levels")
-    plt.xlabel("Pruning Level (%)")
-    plt.ylabel("Target Retrieval Rank (Lower is Better)")
-    plt.yscale("log")
-    plt.grid(True, linestyle="--", alpha=0.5)
-    plt.tight_layout()
+#     plt.boxplot(all_ranks, labels=[f"{int(p*100)}%" for p in pruning_levels])
+#     plt.title("Target Concept Rank Waterfall Across Pruning Levels")
+#     plt.xlabel("Pruning Level (%)")
+#     plt.ylabel("Target Retrieval Rank (Lower is Better)")
+#     plt.yscale("log")
+#     plt.grid(True, linestyle="--", alpha=0.5)
+#     plt.tight_layout()
 
-    save_path = os.path.join(output_dir, "target_rank_waterfall.png")
-    plt.savefig(save_path, dpi=300)
-    plt.close()
-    print(f"[+] Saved target rank waterfall plot to: {save_path}")
+#     save_path = os.path.join(output_dir, "target_rank_waterfall.png")
+#     plt.savefig(save_path, dpi=300)
+#     plt.close()
+#     print(f"[+] Saved target rank waterfall plot to: {save_path}")
 
 
 def plot_concept_retrieval_heatmap(
