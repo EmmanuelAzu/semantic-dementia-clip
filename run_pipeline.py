@@ -16,13 +16,12 @@ from src.generate_analysis_plots import (
     plot_concept_retrieval_heatmap,
     plot_hierarchical_breakdown_suite,
     plot_signal_noise_distribution_shift,
-    # plot_target_rank_waterfall,
 )
 from src.generate_tsne import generate_joint_hierarchical_tsne
 from src.joint_evaluator import JointSpaceEvaluator
 
-# Refined 8-stage pruning grid for Semantic Dementia evaluation
-PRUNING_LEVELS = [0.00, 0.05, 0.15, 0.35, 0.55, 0.70, 0.80, 0.85]
+# 18-stage pruning schedule (5% increments from 0% to 85%)
+PRUNING_LEVELS = [round(i * 0.05, 2) for i in range(18)]
 
 
 def run_joint_pipeline(
@@ -31,6 +30,7 @@ def run_joint_pipeline(
     print("=" * 60)
     print(" RUNNING MULTIMODAL SEMANTIC DEMENTIA EVALUATION PIPELINE ")
     print("=" * 60)
+    print(f"[*] Pruning Grid ({len(PRUNING_LEVELS)} stages): {PRUNING_LEVELS}")
 
     evaluator = JointSpaceEvaluator(
         sample_frac=sample_frac,
@@ -50,9 +50,8 @@ def run_joint_pipeline(
     plot_category_breakdown_suite(results_df)
     plot_hierarchical_breakdown_suite(results_df)
     plot_signal_noise_distribution_shift(
-        evaluator, pruning_levels=[0.00, 0.05, 0.15, 0.35, 0.55, 0.70, 0.80, 0.85]
+        evaluator, pruning_levels=PRUNING_LEVELS
     )
-    # plot_target_rank_waterfall(evaluator, pruning_levels=PRUNING_LEVELS)
     plot_concept_retrieval_heatmap(evaluator, pruning_levels=PRUNING_LEVELS)
     generate_joint_hierarchical_tsne(evaluator, pruning_levels=PRUNING_LEVELS)
 
