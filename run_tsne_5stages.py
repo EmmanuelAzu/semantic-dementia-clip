@@ -1,11 +1,14 @@
 import torch
-from src.generate_tsne_subcategories import generate_tsne_5levels_with_key
+from src.generate_tsne_subcategories import (
+    PRUNING_LEVELS_5PCT,
+    generate_tsne_grid_with_key,
+)
 from src.joint_evaluator import JointSpaceEvaluator
 
 
 def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"[*] Executing decluttered 5-stage t-SNE pipeline on: {device}")
+    print(f"[*] Executing 18-stage t-SNE grid pipeline on: {device}")
 
     evaluator = JointSpaceEvaluator(
         metadata_path="./data/processed/metadata_processed.csv",
@@ -15,8 +18,12 @@ def main():
         balance_taxonomically=True,
     )
 
-    # You can adjust samples_per_class (e.g., 10, 15, or 20) to control plot density
-    generate_tsne_5levels_with_key(evaluator, samples_per_class=15)
+    generate_tsne_grid_with_key(
+        evaluator,
+        pruning_levels=PRUNING_LEVELS_5PCT,
+        samples_per_class=15,
+        n_cols=6,
+    )
 
 
 if __name__ == "__main__":

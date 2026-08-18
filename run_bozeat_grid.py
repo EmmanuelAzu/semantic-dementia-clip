@@ -1,7 +1,7 @@
 import torch
 from src.bozeat_experiment import (
     DEFAULT_TARGET_PROMPTS,
-    PRUNING_LEVELS_EXTENDED,
+    PRUNING_LEVELS_5PCT,
     run_bozeat_visual_grid,
 )
 from src.joint_evaluator import JointSpaceEvaluator
@@ -9,7 +9,7 @@ from src.joint_evaluator import JointSpaceEvaluator
 
 def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"[*] Executing extended Bozeat Visual Retrieval Grid on: {device}")
+    print(f"[*] Executing 18-stage Bozeat Visual Retrieval Grid on: {device}")
 
     evaluator = JointSpaceEvaluator(
         metadata_path="./data/processed/metadata_processed.csv",
@@ -21,7 +21,7 @@ def main():
 
     run_bozeat_visual_grid(
         evaluator,
-        pruning_levels=PRUNING_LEVELS_EXTENDED,
+        pruning_levels=PRUNING_LEVELS_5PCT,
         target_prompts=DEFAULT_TARGET_PROMPTS,
         output_dir="./data/results/bozeat_experiment",
     )

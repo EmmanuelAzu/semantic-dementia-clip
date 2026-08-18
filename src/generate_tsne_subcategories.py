@@ -6,8 +6,10 @@ import seaborn as sns
 import torch
 from sklearn.manifold import TSNE
 
-# Selected 5-stage pruning schedule
-PRUNING_LEVELS_5 = [0.00, 0.15, 0.25, 0.35, 0.45]
+# 18-stage pruning schedule (5% increments from 0% to 85%)
+PRUNING_LEVELS_5PCT = [
+    round(x, 2) for x in np.arange(0.00, 0.86, 0.05).tolist()
+]
 
 
 def _get_taxonomy_mapping(metadata):
@@ -34,15 +36,16 @@ def _get_taxonomy_mapping(metadata):
     return spec_col, coord_col, super_col
 
 
-def generate_tsne_5levels_with_key(
+def generate_tsne_grid_with_key(
     evaluator,
-    pruning_levels=PRUNING_LEVELS_5,
-    samples_per_class=15,  # Control point density (e.g., 15-20 per class)
+    pruning_levels=PRUNING_LEVELS_5PCT,
+    samples_per_class=15,
     output_dir="./data/results/tsne",
+    n_cols=6,
 ):
-    """Generates decluttered 5-stage t-SNE plots by stratifying/subsampling data points per specific class."""
+    """Generates a decluttered multi-stage t-SNE grid plot with stratified sampling across 5% pruning increments."""
     print(
-        f"[*] Generating decluttered 5-stage t-SNE plots (Max {samples_per_class} samples/class)..."
+        f"[*] Generating decluttered {len(pruning_levels)}-stage t-SNE grid (Max {samples_per_class} samples/class)..."
     )
     os.makedirs(output_dir, exist_ok=True)
     meta = evaluator.metadata.reset_index(drop=True)
@@ -54,16 +57,22 @@ def generate_tsne_5levels_with_key(
     palette = sns.color_palette("tab10", n_colors=len(subcategories))
     subcat_to_color = {sub: palette[i] for i, sub in enumerate(subcategories)}
 
-    fig, axes = plt.subplots(1, 5, figsize=(25, 5.2))
+    n_stages = len(pruning_levels)
+    n_rows = int(np.ceil(n_stages / n_cols))
+
+    fig, axes = plt.subplots(
+        n_rows, n_cols, figsize=(3.8 * n_cols, 4.0 * n_rows)
+    )
+    axes_flat = axes.flatten() if n_stages > 1 else [axes]
 
     marker_map = {
-        "Correct": ("o", 45, 0.80, 0.0, "none"),
-        "Coordinate Error": ("s", 55, 0.90, 1.2, "black"),
-        "Superordinate Error": ("^", 65, 0.95, 1.2, "black"),
-        "Domain Collapse": ("X", 75, 1.00, 1.5, "darkred"),
+        "Correct": ("o", 40, 0.75, 0.0, "none"),
+        "Coordinate Error": ("s", 50, 0.85, 1.0, "black"),
+        "Superordinate Error": ("^", 60, 0.90, 1.0, "black"),
+        "Domain Collapse": ("X", 70, 0.95, 1.2, "darkred"),
     }
 
-    # Pre-select stratified random indices to keep identical subsamples across all 5 pruning stages
+    # Pre-select stratified random indices to keep identical subsamples across all stages
     np.random.seed(42)
     selected_indices = []
     for concept in meta[spec_col].unique():
@@ -74,11 +83,11 @@ def generate_tsne_5levels_with_key(
 
     selected_indices = sorted(selected_indices)
     print(
-        f"[*] Reduced total sample points from {len(meta)} to {len(selected_indices)} across dataset."
+        f"[*] Subsampled {len(selected_indices)} total points ({samples_per_class}/class) across {len(meta)} dataset items."
     )
 
     for idx, p_level in enumerate(pruning_levels):
-        ax = axes[idx]
+        ax = axes_flat[idx]
         pruned_model = evaluator._apply_pruning(evaluator.base_model, p_level)
         (
             img_feats_full,
@@ -157,10 +166,14 @@ def generate_tsne_5levels_with_key(
             )
 
         ax.set_title(
-            f"Atrophy: {p_level * 100:.0f}%", fontsize=13, fontweight="bold"
+            f"Atrophy: {p_level * 100:.0f}%", fontsize=11, fontweight="bold"
         )
         ax.grid(True, linestyle="--", alpha=0.3)
-        ax.tick_params(labelsize=8)
+        ax.tick_params(labelsize=7)
+
+    # Turn off unused subplots if stages do not fill grid completely
+    for idx in range(n_stages, len(axes_flat)):
+        axes_flat[idx].axis("off")
 
     # Construct Legends
     subcat_handles = [
@@ -170,7 +183,7 @@ def generate_tsne_5levels_with_key(
             marker="o",
             color="w",
             markerfacecolor=col,
-            markersize=9,
+            markersize=8,
             label=sub,
         )
         for sub, col in subcat_to_color.items()
@@ -183,8 +196,8 @@ def generate_tsne_5levels_with_key(
             marker="o",
             color="w",
             markerfacecolor="gray",
-            markersize=8,
-            label="Correct Classification",
+            markersize=7,
+            label="Correct",
         ),
         plt.Line2D(
             [0],
@@ -193,7 +206,7 @@ def generate_tsne_5levels_with_key(
             color="w",
             markerfacecolor="gray",
             markeredgecolor="black",
-            markersize=8,
+            markersize=7,
             label="Coordinate Error",
         ),
         plt.Line2D(
@@ -203,7 +216,7 @@ def generate_tsne_5levels_with_key(
             color="w",
             markerfacecolor="gray",
             markeredgecolor="black",
-            markersize=8,
+            markersize=7,
             label="Superordinate Error",
         ),
         plt.Line2D(
@@ -213,17 +226,17 @@ def generate_tsne_5levels_with_key(
             color="w",
             markerfacecolor="red",
             markeredgecolor="darkred",
-            markersize=9,
+            markersize=8,
             label="Domain Collapse",
         ),
     ]
 
     leg1 = fig.legend(
         handles=subcat_handles,
-        title="Subcategories (Coordinate Groups)",
-        title_fontsize="11",
+        title="Coordinate Subcategories",
+        title_fontsize="10",
         loc="upper center",
-        bbox_to_anchor=(0.32, -0.02),
+        bbox_to_anchor=(0.35, -0.01),
         ncol=min(4, len(subcategories)),
         frameon=True,
         facecolor="#f9f9f9",
@@ -232,9 +245,9 @@ def generate_tsne_5levels_with_key(
     fig.legend(
         handles=error_handles,
         title="Error Types & Markers",
-        title_fontsize="11",
+        title_fontsize="10",
         loc="upper center",
-        bbox_to_anchor=(0.75, -0.02),
+        bbox_to_anchor=(0.75, -0.01),
         ncol=2,
         frameon=True,
         facecolor="#f9f9f9",
@@ -243,14 +256,19 @@ def generate_tsne_5levels_with_key(
     fig.add_artist(leg1)
 
     plt.suptitle(
-        f"Joint Space Feature Manifold Trajectory Across 5 Stages of Atrophy (Subsampled {samples_per_class} Points/Class)",
-        fontsize=15,
+        f"Joint Space Feature Manifold Trajectory Across 5% Atrophy Increments (0% to 85%, Subsampled {samples_per_class} Points/Class)",
+        fontsize=14,
         fontweight="bold",
-        y=1.05,
+        y=1.02,
     )
     plt.tight_layout()
 
-    save_path = os.path.join(output_dir, "tsne_5levels_subcategories_key.png")
+    save_path = os.path.join(output_dir, "tsne_trajectory_5pct_grid.png")
     plt.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.close()
-    print(f"[+] Saved decluttered t-SNE plot to: {save_path}")
+    print(f"[+] Saved extended t-SNE grid plot to: {save_path}")
+    return save_path
+
+
+# Alias for backward compatibility with earlier imports
+generate_tsne_5levels_with_key = generate_tsne_grid_with_key
