@@ -5,8 +5,11 @@ import pandas as pd
 from PIL import Image
 import torch
 
-# Selected 5-stage pruning schedule
-PRUNING_LEVELS_5 = [0.00, 0.15, 0.35, 0.60, 0.85]
+# Extended 10-stage pruning schedule (0% to 85% at ~10% increments)
+PRUNING_LEVELS_EXTENDED = [0.00, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.85]
+
+# 4 target prompts spanning living and non-living categories
+DEFAULT_TARGET_PROMPTS = ["Tabby Cat", "Golden Retriever", "Sports Car", "Lemon"]
 
 
 def _get_column_mappings(metadata):
@@ -50,40 +53,38 @@ def load_image_safely(img_path):
     return None
 
 
-def run_bozeat_visual_grid_5levels(
+def run_bozeat_visual_grid(
     evaluator,
-    pruning_levels=PRUNING_LEVELS_5,
-    target_prompts=["Tabby Cat", "Golden Retriever", "Sports Car"],
+    pruning_levels=PRUNING_LEVELS_EXTENDED,
+    target_prompts=DEFAULT_TARGET_PROMPTS,
     output_dir="./data/results/bozeat_experiment",
 ):
-    """Executes Bozeat et al. 'Draw from Prompt' task and generates a 5-level visual grid
+    """Executes Bozeat et al. 'Draw from Prompt' task and generates a 4x10 visual grid
 
-    showing actual retrieved image files for 3 text prompts.
+    showing actual retrieved image files across 10 pruning increments.
     """
     print("=" * 70)
-    print(" RUNNING BOZEAT ET AL. 'DRAW FROM PROMPT' VISUAL RETRIEVAL (5 LEVELS) ")
+    print(" RUNNING BOZEAT ET AL. 'DRAW FROM PROMPT' VISUAL RETRIEVAL ")
     print("=" * 70)
 
     os.makedirs(output_dir, exist_ok=True)
     meta = evaluator.metadata.reset_index(drop=True)
     spec_col, coord_col, super_col = _get_column_mappings(meta)
-    concept_lookup = meta.drop_duplicates(spec_col).set_index(spec_col)
 
     # Filter target prompts available in metadata
     available_concepts = list(meta[spec_col].unique())
     selected_prompts = [p for p in target_prompts if p in available_concepts]
 
-    # Fallback selection if prompts are named slightly differently
-    if len(selected_prompts) < 3:
+    # Fallback selection if target prompts are named slightly differently in metadata
+    if len(selected_prompts) < len(target_prompts):
         for c in available_concepts:
             if c not in selected_prompts:
                 selected_prompts.append(c)
-            if len(selected_prompts) == 3:
+            if len(selected_prompts) == len(target_prompts):
                 break
 
     print(f"[*] Target prompts selected for visual drawing grid:\n    {selected_prompts}")
 
-    # Data structure: {prompt: [(pruning_level, retrieved_image_path, retrieved_concept_name, is_correct)]}
     retrieval_grid_data = {p: [] for p in selected_prompts}
 
     for p_level in pruning_levels:
@@ -98,16 +99,15 @@ def run_bozeat_visual_grid_5levels(
                 continue
 
             concept_idx = unique_concepts.index(prompt_concept)
-            prompt_vec = text_feats[concept_idx].unsqueeze(0)  # Shape: [1, D]
+            prompt_vec = text_feats[concept_idx].unsqueeze(0)
 
             # Compute similarity of target prompt against all dataset images
-            sims = torch.matmul(img_feats, prompt_vec.T).squeeze(1)  # Shape: [N_images]
+            sims = torch.matmul(img_feats, prompt_vec.T).squeeze(1)
             best_img_idx = torch.argmax(sims).item()
 
             retrieved_row = eval_meta.iloc[best_img_idx]
             retrieved_concept = retrieved_row[spec_col]
 
-            # Find image path column
             path_col = next(
                 (c for c in ["filepath", "filename", "image_path", "path", "file_path"] if c in retrieved_row.index),
                 None,
@@ -119,11 +119,11 @@ def run_bozeat_visual_grid_5levels(
                 (p_level, img_path, retrieved_concept, is_correct)
             )
 
-    # --- RENDER 3x5 VISUAL GRID ---
+    # --- RENDER 4x10 VISUAL GRID ---
     n_rows = len(selected_prompts)
     n_cols = len(pruning_levels)
 
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(3.8 * n_cols, 4.0 * n_rows))
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(2.8 * n_cols, 3.2 * n_rows))
     if n_rows == 1:
         axes = np.expand_dims(axes, axis=0)
 
@@ -137,7 +137,6 @@ def run_bozeat_visual_grid_5levels(
             if img is not None:
                 ax.imshow(img)
             else:
-                # Render placeholder if image file is not on disk
                 ax.set_facecolor("#e0e0e0")
                 ax.text(
                     0.5,
@@ -145,65 +144,65 @@ def run_bozeat_visual_grid_5levels(
                     f"Retrieved:\n{ret_concept}\n(Image File\nNot Found)",
                     ha="center",
                     va="center",
-                    fontsize=9,
+                    fontsize=7.5,
                     color="black",
                 )
 
             ax.set_xticks([])
             ax.set_yticks([])
 
-            # Title styling: Green for exact target, Red/Orange for error
+            # Compact titles for 10-column layout
             if is_correct:
-                title_text = f"Retrieved:\n'{ret_concept}' ✓"
+                title_text = f"'{ret_concept}' ✓"
                 title_color = "darkgreen"
                 box_color = "#e6f4ea"
             else:
-                title_text = f"Retrieved:\n'{ret_concept}' ✗"
+                title_text = f"'{ret_concept}' ✗"
                 title_color = "darkred"
                 box_color = "#fce8e6"
 
             ax.set_title(
                 title_text,
-                fontsize=10,
+                fontsize=8.5,
                 color=title_color,
                 fontweight="bold",
-                pad=6,
-                bbox=dict(boxstyle="round,pad=0.3", facecolor=box_color, edgecolor=title_color, lw=1),
+                pad=4,
+                bbox=dict(boxstyle="round,pad=0.2", facecolor=box_color, edgecolor=title_color, lw=0.8),
             )
 
-            # Column Headers (Pruning Level)
+            # Column Headers (Pruning Levels)
             if r_idx == 0:
                 ax.set_xlabel(
-                    f"Atrophy: {p_level * 100:.0f}%",
-                    fontsize=12,
+                    f"{p_level * 100:.0f}%",
+                    fontsize=11,
                     fontweight="bold",
-                    labelpad=10,
+                    labelpad=8,
                 )
                 ax.xaxis.set_label_position("top")
 
-            # Row Labels (Text Prompt Query)
+            # Row Labels (Text Prompts)
             if c_idx == 0:
                 ax.set_ylabel(
                     f"Prompt:\n\"{prompt_concept}\"",
-                    fontsize=12,
+                    fontsize=10.5,
                     fontweight="bold",
                     rotation=0,
-                    labelpad=50,
+                    labelpad=45,
                     ha="right",
                     va="center",
                 )
 
     plt.suptitle(
-        "Bozeat 'Draw from Prompt' Task: Nearest Neighbor Retrieved Images Across 5 Atrophy Stages",
-        fontsize=15,
+        "Bozeat 'Draw from Prompt' Task: Visual Retrieval Trajectory Across Atrophy Increments (0% to 85%)",
+        fontsize=14,
         fontweight="bold",
         y=1.02,
     )
     plt.tight_layout()
 
-    save_path = os.path.join(output_dir, "bozeat_retrieved_images_5levels.png")
+    save_path = os.path.join(output_dir, "bozeat_retrieved_images_extended.png")
     plt.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.close()
 
-    print(f"\n[+] Success! Visual Bozeat grid saved to:\n    {save_path}")
+    print(f"\n[+] Success! Extended visual Bozeat grid saved to:\n    {save_path}")
     return save_path

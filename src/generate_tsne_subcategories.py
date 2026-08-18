@@ -7,7 +7,7 @@ import torch
 from sklearn.manifold import TSNE
 
 # Selected 5-stage pruning schedule
-PRUNING_LEVELS_5 = [0.00, 0.15, 0.35, 0.60, 0.85]
+PRUNING_LEVELS_5 = [0.00, 0.15, 0.25, 0.35, 0.45]
 
 
 def _get_taxonomy_mapping(metadata):
