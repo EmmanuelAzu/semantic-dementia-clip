@@ -210,7 +210,7 @@ TINY_IMAGENET_DRAWABLE_TAXONOMY = {
 }
 
 
-def extract_dataset(zip_path, extract_dir, max_images_per_class=500):
+def extract_dataset(zip_path, extract_dir, max_images_per_class=100):
     os.makedirs(extract_dir, exist_ok=True)
     raw_images_dir = os.path.join(extract_dir, "raw")
     os.makedirs(raw_images_dir, exist_ok=True)
@@ -248,6 +248,9 @@ def extract_dataset(zip_path, extract_dir, max_images_per_class=500):
                 save_path = os.path.join(raw_images_dir, local_filename)
                 img.save(save_path)
 
+                # Contextual prompt template prevents baseline text-query ambiguity at 0% pruning
+                prompt_text = f"a photo of a {tax_info['specific'].lower()}, a type of {tax_info['coordinate'].lower()}."
+
                 extracted_records.append(
                     {
                         "filepath": save_path,
@@ -257,6 +260,7 @@ def extract_dataset(zip_path, extract_dir, max_images_per_class=500):
                         "coordinate": tax_info["coordinate"],
                         "superordinate": tax_info["superordinate"],
                         "domain": tax_info["domain"],
+                        "prompt_text": prompt_text,
                     }
                 )
 

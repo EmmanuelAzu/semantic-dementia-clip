@@ -42,20 +42,23 @@ def generate_tsne_grid_with_key(
     samples_per_class=15,
     output_dir="./data/results/tsne",
     n_cols=6,
+    use_single_word_prompts=False,
 ):
-    """Generates a decluttered multi-stage t-SNE grid plot with stratified sampling across 5% pruning increments."""
+    """Generates a multi-stage t-SNE grid plot with color-coded specific concepts and error-type markers."""
     print(
-        f"[*] Generating decluttered {len(pruning_levels)}-stage t-SNE grid (Max {samples_per_class} samples/class)..."
+        f"[*] Generating {len(pruning_levels)}-stage t-SNE grid with concept-level color coding..."
     )
     os.makedirs(output_dir, exist_ok=True)
     meta = evaluator.metadata.reset_index(drop=True)
     spec_col, coord_col, super_col = _get_taxonomy_mapping(meta)
     concept_lookup = meta.drop_duplicates(spec_col).set_index(spec_col)
 
-    # Color palette for Coordinate Subcategories
-    subcategories = sorted(list(meta[coord_col].unique()))
-    palette = sns.color_palette("tab10", n_colors=len(subcategories))
-    subcat_to_color = {sub: palette[i] for i, sub in enumerate(subcategories)}
+    # Color palette mapped directly to Specific Object Concepts
+    unique_concepts = sorted(list(meta[spec_col].unique()))
+    palette = sns.color_palette("husl", n_colors=len(unique_concepts))
+    concept_to_color = {
+        concept: palette[i] for i, concept in enumerate(unique_concepts)
+    }
 
     n_stages = len(pruning_levels)
     n_rows = int(np.ceil(n_stages / n_cols))
@@ -72,48 +75,53 @@ def generate_tsne_grid_with_key(
         "Domain Collapse": ("X", 70, 0.95, 1.2, "darkred"),
     }
 
-    # Pre-select stratified random indices to keep identical subsamples across all stages
+    # Stratified sampling across dataset indices
     np.random.seed(42)
     selected_indices = []
-    for concept in meta[spec_col].unique():
+    for concept in unique_concepts:
         concept_idx = meta[meta[spec_col] == concept].index.values
         n_select = min(len(concept_idx), samples_per_class)
         chosen = np.random.choice(concept_idx, size=n_select, replace=False)
         selected_indices.extend(chosen)
 
     selected_indices = sorted(selected_indices)
-    print(
-        f"[*] Subsampled {len(selected_indices)} total points ({samples_per_class}/class) across {len(meta)} dataset items."
-    )
 
     for idx, p_level in enumerate(pruning_levels):
         ax = axes_flat[idx]
         pruned_model = evaluator._apply_pruning(evaluator.base_model, p_level)
+
         (
             img_feats_full,
             text_feats,
             true_labels_full,
-            unique_concepts,
-            eval_meta_full,
+            eval_concepts,
+            _,
         ) = evaluator._extract_joint_features(pruned_model)
 
-        # Subsample feature tensors and labels
+        # Optional single-word prompt override for baseline evaluation
+        if use_single_word_prompts:
+            text_tokens = evaluator.tokenizer(eval_concepts).to(
+                evaluator.device
+            )
+            with torch.no_grad():
+                text_feats = pruned_model.encode_text(text_tokens)
+                text_feats = text_feats / text_feats.norm(
+                    dim=-1, keepdim=True
+                )
+
         img_feats = img_feats_full[selected_indices]
         true_labels = [true_labels_full[i] for i in selected_indices]
 
-        # Classification similarity on subsampled feature set
         sim_matrix = torch.matmul(img_feats, text_feats.T)
         top1_indices = torch.argmax(sim_matrix, dim=1).numpy()
 
-        # Compute 2D t-SNE projection
         tsne = TSNE(
             n_components=2, perplexity=25, random_state=42, init="pca"
         )
         coords_2d = tsne.fit_transform(img_feats.numpy())
 
-        # Plot subsampled points
         for i, true_spec in enumerate(true_labels):
-            pred_spec = unique_concepts[top1_indices[i]]
+            pred_spec = eval_concepts[top1_indices[i]]
 
             if pred_spec == true_spec:
                 err_type = "Correct"
@@ -146,12 +154,7 @@ def generate_tsne_grid_with_key(
                 else:
                     err_type = "Domain Collapse"
 
-            subcat = (
-                concept_lookup.loc[true_spec, coord_col]
-                if true_spec in concept_lookup.index
-                else "Other"
-            )
-            color = subcat_to_color.get(subcat, "gray")
+            color = concept_to_color.get(true_spec, "gray")
             marker, size, alpha, lw, edge_color = marker_map[err_type]
 
             ax.scatter(
@@ -171,22 +174,21 @@ def generate_tsne_grid_with_key(
         ax.grid(True, linestyle="--", alpha=0.3)
         ax.tick_params(labelsize=7)
 
-    # Turn off unused subplots if stages do not fill grid completely
     for idx in range(n_stages, len(axes_flat)):
         axes_flat[idx].axis("off")
 
     # Construct Legends
-    subcat_handles = [
+    concept_handles = [
         plt.Line2D(
             [0],
             [0],
             marker="o",
             color="w",
             markerfacecolor=col,
-            markersize=8,
-            label=sub,
+            markersize=7,
+            label=concept,
         )
-        for sub, col in subcat_to_color.items()
+        for concept, col in concept_to_color.items()
     ]
 
     error_handles = [
@@ -232,22 +234,22 @@ def generate_tsne_grid_with_key(
     ]
 
     leg1 = fig.legend(
-        handles=subcat_handles,
-        title="Coordinate Subcategories",
+        handles=concept_handles,
+        title="Object Concepts",
         title_fontsize="10",
         loc="upper center",
-        bbox_to_anchor=(0.35, -0.01),
-        ncol=min(4, len(subcategories)),
+        bbox_to_anchor=(0.40, -0.01),
+        ncol=min(6, len(unique_concepts)),
         frameon=True,
         facecolor="#f9f9f9",
     )
 
     fig.legend(
         handles=error_handles,
-        title="Error Types & Markers",
+        title="Error Categories",
         title_fontsize="10",
         loc="upper center",
-        bbox_to_anchor=(0.75, -0.01),
+        bbox_to_anchor=(0.82, -0.01),
         ncol=2,
         frameon=True,
         facecolor="#f9f9f9",
@@ -256,19 +258,19 @@ def generate_tsne_grid_with_key(
     fig.add_artist(leg1)
 
     plt.suptitle(
-        f"Joint Space Feature Manifold Trajectory Across 5% Atrophy Increments (0% to 85%, Subsampled {samples_per_class} Points/Class)",
-        fontsize=14,
+        f"Joint Space Feature Trajectory Across 5% Atrophy Increments (0% to 85%)\n"
+        f"Prompting: {'Single-Word' if use_single_word_prompts else 'Contextual Template'}",
+        fontsize=13,
         fontweight="bold",
-        y=1.02,
+        y=1.03,
     )
     plt.tight_layout()
 
-    save_path = os.path.join(output_dir, "tsne_trajectory_5pct_grid.png")
+    save_path = os.path.join(output_dir, "tsne_trajectory_specific_colors.png")
     plt.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.close()
-    print(f"[+] Saved extended t-SNE grid plot to: {save_path}")
+    print(f"[+] Saved concept-colored t-SNE grid to: {save_path}")
     return save_path
 
 
-# Alias for backward compatibility with earlier imports
 generate_tsne_5levels_with_key = generate_tsne_grid_with_key
